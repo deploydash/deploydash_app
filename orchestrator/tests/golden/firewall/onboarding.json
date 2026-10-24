@@ -1,0 +1,74 @@
+[
+  {
+    "family": "ipv4",
+    "label": "locked-22",
+    "port_end": 22,
+    "port_start": 22,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "locked-22",
+    "port_end": 22,
+    "port_start": 22,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "locked-80",
+    "port_end": 80,
+    "port_start": 80,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "locked-80",
+    "port_end": 80,
+    "port_start": 80,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "locked-443",
+    "port_end": 443,
+    "port_start": 443,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "locked-443",
+    "port_end": 443,
+    "port_start": 443,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "fixed-http3",
+    "port_end": 443,
+    "port_start": 443,
+    "protocol": "udp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "fixed-http3",
+    "port_end": 443,
+    "port_start": 443,
+    "protocol": "udp",
+    "source_cidr": null,
+    "source_family": null
+  }
+]

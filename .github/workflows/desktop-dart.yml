@@ -1,0 +1,89 @@
+name: Desktop Dart CI
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+
+      - name: Fetch Flutter dependencies
+        run: flutter pub get
+
+      - name: Run Flutter analyze
+        run: flutter analyze
+
+      - name: Run Flutter test suite
+        run: flutter test
+
+  scoped-coverage:
+    name: Desktop coverage (${{ matrix.gate }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gate:
+          - agent_access_postgres_coverage.sh
+          - analytics_coverage.sh
+          - backup_coverage.sh
+          - database_coverage.sh
+          - desktop_updates_coverage.sh
+          - docker_storage_coverage.sh
+          - flutter_coverage.sh
+          - github_integration_coverage.sh
+          - logs_coverage.sh
+          - models_coverage.sh
+          - native_process_security_coverage.sh
+          - overview_workspace_coverage.sh
+          - package_boundary_accessibility_coverage.sh
+          - process_security_diagnostics_coverage.sh
+          - project_deletion_recovery_coverage.sh
+          - project_server_scope_coverage.sh
+          - project_workspace_deployment_coverage.sh
+          - scheduler_coverage.sh
+          - security_workspace_coverage.sh
+          - server_onboarding_coverage.sh
+          - server_updates_coverage.sh
+          - services_coverage.sh
+          - startup_and_ssh_key_feature_coverage.sh
+          - ui_system_coverage.sh
+          - windows_store_accessibility_coverage.sh
+          - workers_coverage.sh
+          - workspace_ui_coverage.sh
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+
+      - name: Fetch Flutter dependencies
+        run: flutter pub get
+
+      - name: Run scoped coverage gate
+        run: bash "./scripts/${{ matrix.gate }}"

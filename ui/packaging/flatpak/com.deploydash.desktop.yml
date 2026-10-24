@@ -1,0 +1,28 @@
+app-id: com.deploydash.desktop
+runtime: org.gnome.Platform
+runtime-version: "46"
+sdk: org.gnome.Sdk
+command: deploydash
+finish-args:
+  - --device=dri
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --talk-name=org.freedesktop.Flatpak
+
+modules:
+  - name: deploydash
+    buildsystem: simple
+    build-commands:
+      - test -d ui/build/linux/x64/release/bundle
+      - install -Dm755 ui/build/linux/x64/release/bundle/deploydash /app/bin/deploydash
+      - cp -a ui/build/linux/x64/release/bundle/lib /app/
+      - cp -a ui/build/linux/x64/release/bundle/data /app/
+      - install -Dm644 ui/packaging/linux/deploydash.desktop /app/share/applications/com.deploydash.desktop.desktop
+      - install -Dm644 ui/assets/icons/app_icon.png /app/share/icons/hicolor/256x256/apps/com.deploydash.desktop.png
+      - install -Dm644 ui/assets/icons/app_icon.png /app/share/icons/hicolor/512x512/apps/com.deploydash.desktop.png
+      - install -Dm644 ui/packaging/flatpak/com.deploydash.desktop.metainfo.xml /app/share/metainfo/com.deploydash.desktop.metainfo.xml
+    sources:
+      - type: dir
+        path: ../../..

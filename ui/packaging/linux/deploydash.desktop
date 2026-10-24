@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Deploy Dash
+GenericName=Self-hosted deployment manager
+Comment=Manage app deployments and infrastructure on your own servers
+Exec=deploydash %U
+Icon=com.deploydash.desktop
+Terminal=false
+Type=Application
+Categories=Development;
+Keywords=deploy;deployment;server;infrastructure;docker;postgres;devops;
+StartupNotify=true
+StartupWMClass=com.deploydash.desktop
+MimeType=x-scheme-handler/deploydash;

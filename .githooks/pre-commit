@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+# The seconds-only commit gate. Everything here must finish in a few seconds;
+# the minutes-long suites (backend tests, mypy, Flutter tests, scaffolds,
+# generated code) run in .githooks/pre-push instead.
+set -euo pipefail
+
+repository_root="$(git rev-parse --show-toplevel)"
+cd "${repository_root}"
+
+printf '%s\n' 'Running Deploy Dash pre-commit checks…'
+
+(
+  set -e
+  cd orchestrator
+  uv run ruff check
+  uv run ruff format --check
+)
+
+# Secret-masking audit (enforced copy: .github/workflows/ci.yml) and the
+# workflow duplicate-key scan, same as the repo tier of .githooks/pre-push.
+python3 - <<'PY'
+import glob
+import re
+from pathlib import Path
+import yaml
+
+failures = []
+for path in sorted(Path(".github/workflows").glob("*.yml")):
+    text = path.read_text(encoding="utf-8")
+    consumed = set(re.findall(r"\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}", text))
+    consumed.discard("GITHUB_TOKEN")
+    masked = set(re.findall(r"add-mask::\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}", text))
+    unmasked = sorted(consumed - masked)
+    if unmasked:
+        failures.append(f"{path}: unmasked secrets {unmasked}")
+if failures:
+    raise SystemExit("\n".join(failures))
+
+class DupError(Exception):
+    pass
+class Loader(yaml.SafeLoader):
+    pass
+def construct_mapping(loader, node, deep=False):
+    keys = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=True)
+        if key in keys:
+            raise DupError(f"{path}: duplicate key: {key}")
+        keys.add(key)
+    return loader.construct_mapping(node, deep)
+Loader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping)
+for path in sorted(glob.glob(".github/workflows/*.yml")):
+    list(yaml.load_all(open(path), Loader=Loader))
+print("Workflow checks passed.")
+PY
+
+# Staged Dart files must already be formatted; the hook checks only what the
+# commit contains, so unrelated dirty files never block a commit. (The array
+# form matters: an empty plain string would vanish and dart format would fall
+# back to checking the whole tree.)
+mapfile -t staged_dart < <(git diff --cached --name-only --diff-filter=ACM -- '*.dart' || true)
+if (( ${#staged_dart[@]} > 0 )); then
+  dart format --output=none --set-exit-if-changed "${staged_dart[@]}"
+else
+  echo "No staged Dart files; format check skipped."
+fi
+
+printf '%s\n' 'Deploy Dash pre-commit checks passed.'

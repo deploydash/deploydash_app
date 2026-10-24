@@ -1,0 +1,58 @@
+name: Store Submit
+
+# Manual retry path for Store submission. The release pipeline submits
+# automatically after QA passes (release.yml store-submit); this workflow
+# replays the exact same script for a tag whose pipeline submission failed
+# and must not go through QA again. Never triggers on release activity:
+# firing here after publish would double-submit.
+#
+# Both architectures submit from the tag's release assets; see W0.3 in the
+# task list if Partner Center ever requires a combined submission instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to submit (e.g. v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  # Write: list/edit draft releases and record the submission marker.
+  contents: write
+
+jobs:
+  submit:
+    name: Submit MSIX packages to the Store
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mask Store secrets in logs
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.AZURE_AD_TENANT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_SECRET }}"
+          echo "::add-mask::${{ secrets.SELLER_ID }}"
+
+      - name: Set up Microsoft Store CLI
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      - name: Install Linux keyring for Store CLI
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gnome-keyring dbus-x11 libsecret-1-0
+
+      - name: Submit packages and commit for certification
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+        run: |
+          bash ui/scripts/store_submit_release.sh "${{ inputs.tag }}"

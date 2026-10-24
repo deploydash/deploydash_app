@@ -1,0 +1,254 @@
+[
+  {
+    "family": "ipv4",
+    "label": "locked-80",
+    "port_end": 80,
+    "port_start": 80,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "locked-80",
+    "port_end": 80,
+    "port_start": 80,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "locked-443",
+    "port_end": 443,
+    "port_start": 443,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "locked-443",
+    "port_end": 443,
+    "port_start": 443,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "locked-2022",
+    "port_end": 2022,
+    "port_start": 2022,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "locked-2022",
+    "port_end": 2022,
+    "port_start": 2022,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "fixed-http3",
+    "port_end": 443,
+    "port_start": 443,
+    "protocol": "udp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "fixed-http3",
+    "port_end": 443,
+    "port_start": 443,
+    "protocol": "udp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 5432,
+    "port_start": 5432,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 5432,
+    "port_start": 5432,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 53,
+    "port_start": 53,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 53,
+    "port_start": 53,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 53,
+    "port_start": 53,
+    "protocol": "udp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 53,
+    "port_start": 53,
+    "protocol": "udp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 25,
+    "port_start": 25,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 25,
+    "port_start": 25,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 465,
+    "port_start": 465,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 465,
+    "port_start": 465,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 587,
+    "port_start": 587,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 587,
+    "port_start": 587,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 110,
+    "port_start": 110,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 110,
+    "port_start": 110,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 995,
+    "port_start": 995,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 995,
+    "port_start": 995,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 143,
+    "port_start": 143,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 143,
+    "port_start": 143,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv4",
+    "label": "curated",
+    "port_end": 993,
+    "port_start": 993,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  },
+  {
+    "family": "ipv6",
+    "label": "curated",
+    "port_end": 993,
+    "port_start": 993,
+    "protocol": "tcp",
+    "source_cidr": null,
+    "source_family": null
+  }
+]

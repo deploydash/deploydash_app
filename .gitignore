@@ -1,0 +1,41 @@
+# Build outputs
+build/
+dist/
+orchestrator/runtime_bundle/
+coverage/
+.coverage
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.dll
+*.exe
+*.msi
+*.deb
+*.dmg
+*.snap
+*.flatpak
+
+# Local environments
+.venv/
+.runtime_bundle_venv/
+node_modules/
+
+# Local configuration and secrets
+*.local.json
+ui/config/dart-defines.local.json
+ui/config/dart-defines.ci.json
+local_engine_config.json
+.env
+.env.*
+
+# Local tool state
+session.json

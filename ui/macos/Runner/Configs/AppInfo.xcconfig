@@ -1,0 +1,15 @@
+// Application-level settings for the Runner target.
+//
+// This may be replaced with something auto-generated from metadata (e.g., pubspec.yaml) in the
+// future. If not, the values below would default to using the project name when this becomes a
+// 'flutter create' template.
+
+// The application's bundle display name.
+PRODUCT_NAME = Deploy Dash
+
+// The application's bundle identifier.
+PRODUCT_BUNDLE_IDENTIFIER = com.deploydash.desktop
+
+// The copyright displayed in application information.
+PRODUCT_COPYRIGHT = Copyright © 2026 Deploy Dash. Licensed under PolyForm Strict 1.0.0.
+SWIFT_OBJC_BRIDGING_HEADER = Runner/Runner-Bridging-Header.h

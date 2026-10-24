@@ -1,0 +1,141 @@
+name: Backend Engine CI
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  package-and-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.13.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Validate pinned backend version file
+        shell: bash
+        run: |
+          ORCHESTRATOR_VERSION_FILE="${DEPLOYDASH_ORCHESTRATOR_VERSION_FILE:-ui/orchestrator.version}"
+          test -s "${ORCHESTRATOR_VERSION_FILE}"
+          cat "${ORCHESTRATOR_VERSION_FILE}"
+
+      - name: Build orchestrator wheel
+        working-directory: orchestrator
+        run: ./scripts/build_wheel.sh
+
+      - name: Sync backend Python environment
+        working-directory: orchestrator
+        run: uv sync
+
+      - name: Lint backend Python with ruff
+        working-directory: orchestrator
+        run: uv run ruff check && uv run ruff format --check
+
+      - name: Type-check backend Python with mypy
+        working-directory: orchestrator
+        run: uv run mypy
+
+      - name: Prepare bundled backend package (local-wheel mode)
+        working-directory: orchestrator
+        run: |
+          ORCHESTRATOR_PACKAGE_SOURCE=local-wheel \
+          ORCHESTRATOR_ALLOW_LOCAL_FALLBACK=0 \
+          ./scripts/prepare_desktop_runtime_bundle.sh
+
+      - name: Package runtime smoke check
+        working-directory: orchestrator
+        run: |
+          uv run python - <<'PY'
+          import json
+          from orchestrator import engine
+
+          echo_payload = json.dumps({
+              "action": "run_workflow",
+              "workflow_id": "core",
+              "operation_id": "echo",
+              "data": "ci-smoke",
+          })
+          echo_result = json.loads(engine.handle_request(echo_payload))
+          assert echo_result["status"] == "success", echo_result
+          assert echo_result["data"] == "ci-smoke", echo_result
+
+          describe_payload = json.dumps({
+              "action": "run_workflow",
+              "workflow_id": "setup",
+              "operation_id": "describe",
+          })
+          describe_result = json.loads(engine.handle_request(describe_payload))
+          assert describe_result["status"] == "success", describe_result
+          assert describe_result["code"] == "OK", describe_result
+          assert isinstance(describe_result.get("msg"), str), describe_result
+          assert isinstance(describe_result.get("parts"), list), describe_result
+          assert isinstance(describe_result.get("steps"), list), describe_result
+          PY
+
+      - name: Run backend Python tests
+        working-directory: orchestrator
+        run: uv run python -m unittest discover -s tests -p '*_test.py'
+
+  scoped-coverage:
+    name: Backend coverage (${{ matrix.gate }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gate:
+          - apt_runtime_coverage.sh
+          - app_release_coverage.sh
+          - backup_coverage.sh
+          - database_coverage.sh
+          - desktop_runtime_coverage.sh
+          - dns_runtime_coverage.sh
+          - firewall_ops_coverage.sh
+          - firewall_status_coverage.sh
+          - failure_evidence_coverage.sh
+          - http_gateway_coverage.sh
+          - managed_software_coverage.sh
+          - onboarding_security_coverage.sh
+          - post_milvus_removal_coverage.sh
+          - postgres_agent_access_coverage.sh
+          - postgres_local_import_coverage.sh
+          - postgres_major_upgrade_coverage.sh
+          - postgres_project_registry_coverage.sh
+          - postgres_service_layout_coverage.sh
+          - pyinfra_runtime_op_hash_coverage.sh
+          - railpack_deploy_coverage.sh
+          - release_helpers_coverage.sh
+          - runtime_security_coverage.sh
+          - server_docker_storage_coverage.sh
+          - server_layout_coverage.sh
+          - server_overview_coverage.sh
+          - server_system_coverage.sh
+          - setup_server_coverage.sh
+    defaults:
+      run:
+        working-directory: orchestrator
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.13.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Sync backend Python environment
+        run: uv sync
+
+      - name: Run scoped coverage gate
+        run: bash "./scripts/${{ matrix.gate }}"

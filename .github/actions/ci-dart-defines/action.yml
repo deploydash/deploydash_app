@@ -1,0 +1,63 @@
+name: Create optional CI Dart defines
+description: >
+  Write ui/config/dart-defines.ci.json from the CI-consumed secrets and
+  export its absolute path as DEPLOYDASH_DART_DEFINES_FILE. Single owner of
+  the CI defines payload: producing jobs must call this action instead of
+  inlining the payload, so the key set and the output path cannot drift
+  apart between the .deb, DMG, Windows, and Snap jobs. Secret masking stays
+  in each calling workflow, where the secret-hygiene audit requires it.
+
+inputs:
+  github-client-id:
+    description: DEPLOYDASH_GITHUB_CLIENT_ID secret value.
+    required: false
+    default: ""
+  github-client-secret:
+    description: DEPLOYDASH_GITHUB_CLIENT_SECRET secret value.
+    required: false
+    default: ""
+  show-manual-github-callback:
+    description: DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK secret value.
+    required: false
+    default: ""
+  github-enable-deploy-key-write:
+    description: DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE secret value.
+    required: false
+    default: ""
+  amplitude-api-key:
+    description: DEPLOYDASH_AMPLITUDE_API_KEY secret value.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Create optional CI Dart defines
+      shell: bash
+      env:
+        DEPLOYDASH_GITHUB_CLIENT_ID: ${{ inputs.github-client-id }}
+        DEPLOYDASH_GITHUB_CLIENT_SECRET: ${{ inputs.github-client-secret }}
+        DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK: ${{ inputs.show-manual-github-callback }}
+        DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE: ${{ inputs.github-enable-deploy-key-write }}
+        DEPLOYDASH_AMPLITUDE_API_KEY: ${{ inputs.amplitude-api-key }}
+      run: |
+        if [[ -z "${DEPLOYDASH_GITHUB_CLIENT_ID}${DEPLOYDASH_GITHUB_CLIENT_SECRET}${DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK}${DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE}${DEPLOYDASH_AMPLITUDE_API_KEY}" ]]; then
+          exit 0
+        fi
+        python3 - <<'PY'
+        import json
+        import os
+        from pathlib import Path
+
+        payload = {
+            "DEPLOYDASH_GITHUB_CLIENT_ID": os.environ.get("DEPLOYDASH_GITHUB_CLIENT_ID", ""),
+            "DEPLOYDASH_GITHUB_CLIENT_SECRET": os.environ.get("DEPLOYDASH_GITHUB_CLIENT_SECRET", ""),
+            "DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK": os.environ.get("DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK", "false") or "false",
+            "DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE": os.environ.get("DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE", "false") or "false",
+            "DEPLOYDASH_AMPLITUDE_API_KEY": os.environ.get("DEPLOYDASH_AMPLITUDE_API_KEY", ""),
+        }
+        output = Path("ui/config/dart-defines.ci.json")
+        output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        print(output.resolve())
+        PY
+        echo "DEPLOYDASH_DART_DEFINES_FILE=${GITHUB_WORKSPACE}/ui/config/dart-defines.ci.json" >> "${GITHUB_ENV}"

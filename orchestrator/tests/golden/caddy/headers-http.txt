@@ -1,0 +1,9 @@
+header {
+    -Server
+    -Via
+    -X-Powered-By
+    ?X-Content-Type-Options nosniff
+    ?Referrer-Policy strict-origin-when-cross-origin
+    ?Permissions-Policy accelerometer=(),autoplay=(),camera=(),display-capture=(),geolocation=(),gyroscope=(),hid=(),magnetometer=(),microphone=(),midi=(),payment=(),publickey-credentials-get=(),screen-wake-lock=(),serial=(),usb=(),xr-spatial-tracking=()
+    ?X-Frame-Options SAMEORIGIN
+}

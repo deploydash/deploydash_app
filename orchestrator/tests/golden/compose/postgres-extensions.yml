@@ -1,0 +1,38 @@
+volumes:
+  postgres_data:
+
+services:
+  postgres:
+    image: deploydash/postgres-ext:17.10-bookworm-vector-pg-search-postgis
+    container_name: deploydash_postgres
+    restart: unless-stopped
+    pids_limit: 512
+    env_file:
+      - .env
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/deploydash-postgres-tls/server.crt
+      - -c
+      - ssl_key_file=/run/deploydash-postgres-tls/server.key
+      - -c
+      - hba_file=/run/deploydash-postgres-tls/pg_hba.conf
+      - -c
+      - shared_preload_libraries=pg_search
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - /opt/deploydash/stack/postgres/tls/server.crt:/run/deploydash-postgres-tls/server.crt:ro
+      - /opt/deploydash/stack/postgres/tls/server.key:/run/deploydash-postgres-tls/server.key:ro
+      - /opt/deploydash/stack/postgres/tls/pg_hba.conf:/run/deploydash-postgres-tls/pg_hba.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s

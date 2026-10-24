@@ -1,0 +1,39 @@
+name: Desktop Database Coverage CI
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  database-coverage:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+
+      - name: Fetch Flutter dependencies
+        run: flutter pub get
+
+      - name: Verify generated code is up to date
+        run: |
+          flutter pub run build_runner build --delete-conflicting-outputs
+          git diff --exit-code || {
+            echo "::error::Generated Dart code (e.g. *.g.dart, *.freezed.dart) is out of date with its source. Run 'flutter pub run build_runner build --delete-conflicting-outputs' in ui/ and commit the result." >&2
+            exit 1
+          }
+
+      - name: Run desktop database coverage gate
+        run: bash ./scripts/database_coverage.sh

@@ -1,0 +1,24 @@
+services:
+  bind9:
+    container_name: deploydash_bind9
+    image: internetsystemsconsortium/bind9:9.20
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
+    pids_limit: 512
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+    command:
+      - -g
+      - -c
+      - /etc/bind/named.conf
+    volumes:
+      - /opt/deploydash/stack/dns/bind:/etc/bind:ro
+      - /opt/deploydash/stack/dns/zones:/zones:ro

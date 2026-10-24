@@ -1,0 +1,6 @@
+Types: deb
+URIs: https://updates.deploydash.com/apt
+Suites: stable
+Components: main
+Architectures: amd64 arm64
+Signed-By: /usr/share/keyrings/deploydash-archive-keyring.asc

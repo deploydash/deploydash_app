@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy Dash timer for deploydash-demo-app-task-7.service
+
+[Timer]
+Unit=deploydash-demo-app-task-7.service
+OnBootSec=1min
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

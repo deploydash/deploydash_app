@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Deploy Dash"
+    Manufacturer="Deploy Dash"
+    Version="1.0.0"
+    UpgradeCode="{815AB1E1-0D57-4A98-8E40-4E68539B6D54}"
+    Scope="perMachine">
+    <SummaryInformation Description="Self-hosted deployment manager for your own servers" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Deploy Dash is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLDIR" Name="Deploy Dash" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuDeployDash" Name="Deploy Dash" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Deploy Dash" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
+      <ComponentRef Id="ProtocolHandlerComponent" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AppFiles" Directory="INSTALLDIR">
+      <?define SourceDir = "$(var.SourceDir)" ?>
+      <Files Include="$(var.SourceDir)\**" />
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="StartMenuShortcutComponent" Directory="ProgramMenuDeployDash" Guid="{B65E85F7-E54B-43D1-9459-2CC537CDA8CC}">
+      <Shortcut
+        Id="DeployDashStartMenuShortcut"
+        Name="Deploy Dash"
+        Description="Self-hosted deployment manager for your own servers"
+        Target="[INSTALLDIR]deploydash.exe"
+        WorkingDirectory="INSTALLDIR" />
+      <RemoveFolder Id="RemoveProgramMenuDeployDash" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\DeployDash" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="ProtocolHandlerComponent" Directory="INSTALLDIR" Guid="{4A50C5B0-66EE-48EE-BF0D-757371A7C69C}">
+      <RegistryKey Root="HKLM" Key="Software\Classes\deploydash">
+        <RegistryValue Type="string" Value="URL:Deploy Dash OAuth Callback" />
+        <RegistryValue Name="URL Protocol" Type="string" Value="" />
+        <RegistryKey Key="DefaultIcon">
+          <RegistryValue Type="string" Value="[INSTALLDIR]deploydash.exe,0" />
+        </RegistryKey>
+        <RegistryKey Key="shell\open\command">
+          <RegistryValue Type="string" Value="&quot;[INSTALLDIR]deploydash.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+      </RegistryKey>
+      <RegistryValue Root="HKLM" Key="Software\DeployDash" Name="ProtocolRegistered" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>

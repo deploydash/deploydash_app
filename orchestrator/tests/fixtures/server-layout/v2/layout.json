@@ -1,0 +1,25 @@
+{
+  "layout_version": 2,
+  "marker": "/opt/deploydash/LAYOUT_VERSION",
+  "required_directories": [
+    "/opt/deploydash",
+    "/opt/deploydash/firewall",
+    "/opt/deploydash/stack",
+    "/opt/deploydash/stack/apps",
+    "/opt/deploydash/stack/db",
+    "/opt/deploydash/stack/dns",
+    "/opt/deploydash/stack/http",
+    "/opt/deploydash/stack/mail",
+    "/opt/deploydash/stack/postgres",
+    "/opt/deploydash/stack/proxy",
+    "/opt/deploydash/stack/railpack",
+    "/opt/deploydash/state",
+    "/opt/deploydash/state/scheduler",
+    "/opt/deploydash/state/upgrade-backups",
+    "/var/log/deploydash"
+  ],
+  "optional_files": [
+    "/opt/deploydash/state/managed-software-ledger.json",
+    "/opt/deploydash/state/postgres-major-upgrades.json"
+  ]
+}

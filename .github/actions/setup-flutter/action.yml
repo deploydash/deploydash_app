@@ -1,0 +1,55 @@
+name: Setup Flutter SDK
+description: >
+  Install a pinned Flutter SDK from the official Flutter repository with
+  actions/cache acceleration. Replaces third-party setup actions with
+  first-party mechanisms only (git clone + official cache). The pinned
+  version and revision must match everywhere: update this file and the
+  scaffold gate's pin assertions in the same commit.
+
+inputs:
+  flutter-version:
+    description: Flutter release tag to install (pinned, never a channel).
+    required: false
+    default: "3.47.8"
+  flutter-revision:
+    description: Expected commit for the tag; the install fails closed on mismatch.
+    required: false
+    default: "737ba8f885dc774b53b442759999a312c9461e4e"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Flutter SDK cache
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/flutter-sdk-${{ inputs.flutter-version }}
+        key: flutter-sdk-${{ inputs.flutter-version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Clone pinned Flutter SDK unless cached
+      shell: bash
+      env:
+        FLUTTER_VERSION: ${{ inputs.flutter-version }}
+        FLUTTER_REVISION: ${{ inputs.flutter-revision }}
+        FLUTTER_DIR: ${{ runner.temp }}/flutter-sdk-${{ inputs.flutter-version }}
+      run: |
+        if [[ -x "${FLUTTER_DIR}/bin/flutter" ]]; then
+          echo "Using cached Flutter SDK at ${FLUTTER_DIR}."
+        else
+          git clone \
+            --branch "${FLUTTER_VERSION}" \
+            --depth 1 \
+            https://github.com/flutter/flutter.git \
+            "${FLUTTER_DIR}"
+        fi
+        actual_revision="$(git -C "${FLUTTER_DIR}" rev-parse HEAD)"
+        if [[ "${actual_revision}" != "${FLUTTER_REVISION}" ]]; then
+          echo "Flutter ${FLUTTER_VERSION} resolved to an unexpected revision: ${actual_revision}" >&2
+          exit 1
+        fi
+        echo "${FLUTTER_DIR}/bin" >> "${GITHUB_PATH}"
+
+    - name: Prove Flutter SDK version
+      shell: bash
+      run: |
+        flutter --version
+        flutter config --no-analytics

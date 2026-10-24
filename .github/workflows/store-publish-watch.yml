@@ -1,0 +1,62 @@
+name: Store Publish Watch
+
+# Scheduled Store-live gate. After QA passes, the release pipeline submits
+# to the Store and marks the draft release with the submission id; this
+# watcher ticks every 15 minutes and publishes a marked draft once its
+# submission is live (attaching the Microsoft web installer stub).
+# Certification runs on Microsoft time (hours typical, up to three
+# business days), so no runner waits: each tick is a fresh minute-long
+# check. Scheduled workflows only fire from the default branch, and
+# GitHub may delay or skip a tick under load — that only delays publish.
+#
+# Tandem gate: when the Apple leg lands, its live state joins this same
+# publish decision; neither store waits on the other.
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: store-publish-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Publish drafts whose Store submission is live
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mask Store secrets in logs
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.AZURE_AD_TENANT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_SECRET }}"
+          echo "::add-mask::${{ secrets.SELLER_ID }}"
+
+      - name: Set up Microsoft Store CLI
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      - name: Install Linux keyring and Authenticode verifier
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gnome-keyring dbus-x11 libsecret-1-0 osslsigncode
+
+      - name: Check marked drafts against Store state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+        run: |
+          bash ui/scripts/store_publish_watch.sh

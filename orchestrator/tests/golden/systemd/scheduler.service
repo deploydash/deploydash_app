@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy Dash task: Nightly database backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/deploydash/state/scheduler/demo-app/task-7/run.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.deploydash.desktop</id>
+  <name>Deploy Dash</name>
+  <summary>Self-hosted deployment manager for your own servers</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-PolyForm-Strict-1.0.0=https://polyformproject.org/licenses/strict/1.0.0/</project_license>
+  <launchable type="desktop-id">com.deploydash.desktop.desktop</launchable>
+  <developer id="com.deploydash">
+    <name>Deploy Dash</name>
+  </developer>
+  <url type="homepage">https://www.deploydash.com</url>
+  <description>
+    <p>
+      Deploy Dash is a desktop control plane for publishing web apps,
+      configuring PostgreSQL services, and operating
+      self-hosted infrastructure on your own servers.
+    </p>
+  </description>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <releases>
+    <release version="1.0.0" date="2026-04-14" />
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>

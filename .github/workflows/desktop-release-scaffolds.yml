@@ -1,0 +1,107 @@
+name: Desktop Release Validation
+
+# Validates the application-owned release scaffolds: packaging manifests,
+# bridge/runtime surfaces, and their coverage gates. Installed-app E2E,
+# VM gates, and QA-harness coverage run from deploydash_tests, never here.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  validate-scaffolds:
+    name: Validate release scaffolds (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Validate release scaffolds
+        shell: bash
+        run: ui/scripts/validate_release_scaffolds.sh
+
+      - name: Flutter analyze desktop bridge surface
+        shell: bash
+        run: |
+          cd ui
+          flutter pub get
+          flutter analyze lib/native_bridge.dart lib/providers/github_integration_provider.dart lib/services/protocol_link_ingress.dart
+
+      - name: Flutter test bridge and protocol ingress
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cd ui
+          flutter test \
+            test/services/native_bridge_test.dart \
+            test/services/protocol_link_ingress_test.dart \
+            test/providers/github_integration/
+
+      - name: Run desktop identity and update coverage gate
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cd ui
+          bash scripts/desktop_updates_coverage.sh
+
+      - name: Run Windows Store baseline accessibility coverage gate
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cd ui
+          bash scripts/windows_store_accessibility_coverage.sh
+
+      - name: Run release contract tests
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cd orchestrator
+          ./scripts/desktop_runtime_coverage.sh
+
+      - name: Run process-security coverage gates
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cd ui
+          bash scripts/process_security_diagnostics_coverage.sh
+          bash scripts/native_process_security_coverage.sh
+
+  windows-ps-parse:
+    name: Parse and test Windows PowerShell release scripts
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Parse Windows Store PowerShell release scripts
+        shell: pwsh
+        run: |
+          foreach ($path in @(
+            "ui/scripts/build_windows_store.ps1",
+            "ui/scripts/build_windows_store_e2e_pair.ps1",
+            "ui/scripts/lib/windows_store_packaging.psm1",
+            "ui/scripts/lib/windows_store_e2e.psm1"
+          )) {
+            [void][scriptblock]::Create((Get-Content $path -Raw))
+          }
+
+      - name: Run Windows PowerShell coverage gate
+        shell: pwsh
+        run: |
+          # Must be pwsh: multi-segment Join-Path and modern Pester need PS7+.
+          pwsh -ExecutionPolicy Bypass -File ui/scripts/run_windows_pester_coverage.ps1

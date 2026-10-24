@@ -1,0 +1,169 @@
+name: App CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  backend:
+    name: Backend lint, types, and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.13.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Sync backend Python environment
+        run: uv sync
+
+      - name: Lint backend Python with ruff
+        run: uv run ruff check && uv run ruff format --check
+
+      - name: Type-check backend Python with mypy
+        run: uv run mypy
+
+      - name: Run backend Python tests
+        run: uv run python -m unittest discover -s tests -p '*_test.py'
+
+  desktop:
+    name: Desktop analyze and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+
+      - name: Fetch Flutter dependencies
+        run: flutter pub get
+
+      - name: Run Flutter analyze
+        run: flutter analyze
+
+      - name: Run Flutter test suite
+        run: flutter test
+
+  scaffolds:
+    name: Validate release scaffolds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Validate release scaffolds
+        run: bash ui/scripts/validate_release_scaffolds.sh
+
+  secret-hygiene:
+    name: Audit secret masking in workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Every consumed secret must be masked before use
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          failures = []
+          for path in sorted(Path(".github/workflows").glob("*.yml")):
+              text = path.read_text(encoding="utf-8")
+              consumed = set(re.findall(r"\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}", text))
+              # GITHUB_TOKEN is the ephemeral per-run token, not a stored
+              # secret; everything else consumed must be masked before use.
+              consumed.discard("GITHUB_TOKEN")
+              masked = set(re.findall(r"add-mask::\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}", text))
+              unmasked = sorted(consumed - masked)
+              if unmasked:
+                  failures.append(f"{path}: unmasked secrets {unmasked}")
+          if failures:
+              raise SystemExit("\n".join(failures))
+          print("All consumed secrets are masked.")
+          PY
+
+      - name: Secret-bearing files must never match an artifact upload
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import fnmatch
+          from pathlib import Path
+
+          # Files generated from secrets at workflow start. They must never
+          # be reachable from an actions/upload-artifact `path:` glob.
+          # (Plain line scan, no YAML dependency: only `uses:` and the
+          # `path:`/pattern lines matter here.)
+          forbidden = (
+              "ui/config/dart-defines.ci.json",
+              "ui/config/dart-defines.local.json",
+          )
+          failures = []
+          for path in sorted(Path(".github/workflows").glob("*.yml")):
+              lines = path.read_text(encoding="utf-8").splitlines()
+              in_upload, in_block, block_indent = False, False, 0
+              for line in lines:
+                  stripped = line.strip()
+                  if stripped.startswith("- "):
+                      in_upload, in_block = False, False
+                      stripped = stripped[2:].strip()
+                  if stripped.startswith("uses:"):
+                      in_upload = (
+                          stripped.split("@")[0].split(":", 1)[1].strip()
+                          == "actions/upload-artifact"
+                      )
+                      in_block = False
+                      continue
+                  if not in_upload:
+                      continue
+                  if stripped.startswith("path:"):
+                      rest = stripped.split(":", 1)[1].strip()
+                      if rest == "|":
+                          in_block = True
+                          block_indent = len(line) - len(line.lstrip())
+                      elif rest:
+                          in_block = False
+                          for name in forbidden:
+                              if fnmatch.fnmatch(name, rest):
+                                  failures.append(
+                                      f"{path}: upload pattern {rest!r} may include {name}"
+                                  )
+                      continue
+                  if in_block:
+                      indent = len(line) - len(line.lstrip())
+                      if not stripped or indent <= block_indent:
+                          in_block = False
+                          continue
+                      pattern = stripped
+                      for name in forbidden:
+                          if fnmatch.fnmatch(name, pattern):
+                              failures.append(
+                                  f"{path}: upload pattern {pattern!r} may include {name}"
+                              )
+          if failures:
+              raise SystemExit("\n".join(failures))
+          print("No artifact upload can carry secret-bearing files.")
+          PY

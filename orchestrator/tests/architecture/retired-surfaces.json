@@ -1,0 +1,58 @@
+{
+  "$comment": [
+    "Identifiers this repository has deleted, and must never quietly regain.",
+    "",
+    "T-1.5.8 exists because T-1.5.2 removed five wire actions and two callers",
+    "survived - one inside a string constant in runtime_bundle.py, one inside",
+    "a CI workflow - invisible for weeks because nothing enumerated the",
+    "callers of a removed surface. A one-time census finds those once; this",
+    "file is what makes it standing.",
+    "",
+    "A D4 census task that deletes a public surface appends its names here in",
+    "the same commit. The check is",
+    "orchestrator/tests/architecture/retired_surface_test.py.",
+    "",
+    "Occurrences inside a negative assertion - a test proving the surface is",
+    "gone - are not violations; the checker recognises them, so the tests that",
+    "prove a removal do not have to be exempted one by one."
+  ],
+  "wire_actions": [
+    {
+      "name": "check_server",
+      "retired_by": "T-1.5.2",
+      "replacement": "run_workflow with workflow_id=server, operation_id=check"
+    },
+    {
+      "name": "refresh_server_host_key",
+      "retired_by": "T-1.5.2",
+      "replacement": "run_workflow with workflow_id=server, operation_id=refresh_host_key"
+    },
+    {
+      "name": "describe_setup",
+      "retired_by": "T-1.5.2",
+      "replacement": "run_workflow with workflow_id=setup, operation_id=describe"
+    },
+    {
+      "name": "setup_server",
+      "retired_by": "T-1.5.2",
+      "replacement": "run_workflow with workflow_id=setup, operation_id=run"
+    },
+    {
+      "name": "echo",
+      "retired_by": "T-1.5.2",
+      "replacement": "run_workflow with workflow_id=core, operation_id=echo",
+      "exemptions": {
+        "orchestrator/src/orchestrator/plugins/core_plugin.py": "core/echo's response still reports action=echo, a fossil of the alias world; the contract says a request's action is always run_workflow. Fixing it changes a shipped response shape, so it is its own task - see Discovered work, 2026-09-04.",
+        "orchestrator/tests/task_runtime_test.py": "A fake engine response mirroring the core_plugin fossil above; it goes when that does.",
+        "orchestrator/tests/runner_test.py": "CLI argument-parsing fixtures whose payload content is arbitrary; they assert how --payload is parsed, not what the action means."
+      }
+    }
+  ],
+  "workflow_ids": [
+    {
+      "name": "milvus",
+      "retired_by": "the Milvus removal",
+      "replacement": "none; the managed vector-database surface was withdrawn"
+    }
+  ]
+}

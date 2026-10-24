@@ -1,0 +1,8 @@
+{
+  "DEPLOYDASH_APTABASE_APP_KEY": "A-EU-3209480801",
+  "DEPLOYDASH_AMPLITUDE_API_KEY": "",
+  "DEPLOYDASH_GITHUB_CLIENT_ID": "replace_with_your_github_oauth_client_id",
+  "DEPLOYDASH_GITHUB_CLIENT_SECRET": "replace_with_your_github_oauth_client_secret",
+  "DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK": "false",
+  "DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE": "false"
+}

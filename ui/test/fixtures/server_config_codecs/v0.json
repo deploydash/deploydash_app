@@ -1,0 +1,56 @@
+{
+  "service_web_server_config_json": {
+    "enable_https_redirect": false,
+    "enable_response_compression": true,
+    "enable_access_logs": true,
+    "enable_dns_plugin_cloudflare": true,
+    "enable_dns_plugin_porkbun": false,
+    "enable_dns_plugin_namecheap": true,
+    "enable_dns_plugin_cloudns": false,
+    "enable_dns_plugin_easydns": true
+  },
+  "service_postgres_config_json": {
+    "postgres_version": "18",
+    "superuser_password": "fixture-postgres-password",
+    "enabled_extensions": ["vector", "postgis", "vector", "unsupported"]
+  },
+  "service_firewall_config_json": {
+    "strict_mode": false,
+    "allow_postgres": true,
+    "allow_dns": true,
+    "allow_smtp": false,
+    "allow_mail_receive": true,
+    "rollback_timeout_seconds": 240,
+    "custom_rules": [
+      {
+        "id": "fixture-udp",
+        "protocol": "udp",
+        "port_start": 5353,
+        "port_end": 5354,
+        "source_cidr": "192.0.2.0/24",
+        "description": "Fixture DNS range",
+        "enabled": false
+      }
+    ]
+  },
+  "service_system_config_json": {
+    "root_login_enabled": true,
+    "password_auth_enabled": true,
+    "ssh_port": 2200,
+    "timezone": "Europe/London",
+    "swap_gb": 3.5,
+    "automatic_security_updates_enabled": false,
+    "auto_reboot_enabled": true,
+    "maintenance_time": "4:05"
+  },
+  "managed_software_status_json": {
+    "railpack_build_system": {
+      "id": "railpack_build_system",
+      "category": "Build and deployment",
+      "label": "Railpack build system",
+      "status": "current",
+      "can_update": false,
+      "details": [{"label": "Railpack", "status": "current"}]
+    }
+  }
+}

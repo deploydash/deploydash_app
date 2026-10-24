@@ -1,0 +1,102 @@
+name: Store Cert Watch
+
+# Reports Microsoft Store certification state. Intentionally read-only:
+# it never mutates releases or submissions. Certification runs on
+# Microsoft time (hours typical, up to three business days). Automated
+# polling-to-live lives in the release pipeline (store-live job); this
+# stays a passive daily reporter for at-a-glance state.
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Report certification state
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Store credential availability
+        id: store_credentials
+        shell: bash
+        env:
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+        run: |
+          missing=()
+          [[ -n "${AZURE_AD_TENANT_ID}" ]] || missing+=(AZURE_AD_TENANT_ID)
+          [[ -n "${AZURE_AD_APPLICATION_CLIENT_ID}" ]] || missing+=(AZURE_AD_APPLICATION_CLIENT_ID)
+          [[ -n "${AZURE_AD_APPLICATION_SECRET}" ]] || missing+=(AZURE_AD_APPLICATION_SECRET)
+          [[ -n "${SELLER_ID}" ]] || missing+=(SELLER_ID)
+          if (( ${#missing[@]} > 0 )); then
+            echo "configured=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Store certification watch skipped because required repository secrets are not configured: ${missing[*]}."
+            {
+              echo "### Store certification watch skipped"
+              echo
+              echo "The read-only watcher did not run because these repository secrets are missing:"
+              printf -- '- `%s`\n' "${missing[@]}"
+              echo
+              echo "Store submission remains fail-closed."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          echo "configured=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Mask Store secrets in logs
+        if: steps.store_credentials.outputs.configured == 'true'
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.AZURE_AD_TENANT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_SECRET }}"
+          echo "::add-mask::${{ secrets.SELLER_ID }}"
+
+      - name: Set up Microsoft Store CLI
+        if: steps.store_credentials.outputs.configured == 'true'
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      # msstore persists the client secret via libsecret (GNOME Keyring /
+      # D-Bus Secret Service) on Linux. A bare ubuntu runner has neither a
+      # D-Bus session nor a keyring daemon, so reconfigure fails with a
+      # generic swallowed error. The write (reconfigure) and the read
+      # (status) must share one live D-Bus session, hence a single step.
+      - name: Install Linux keyring for Store CLI
+        if: steps.store_credentials.outputs.configured == 'true'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gnome-keyring dbus-x11 libsecret-1-0
+
+      - name: Reconfigure and report submission state
+        if: steps.store_credentials.outputs.configured == 'true'
+        shell: bash
+        env:
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+        run: |
+          # Upstream bug microsoft/msstore-cli#181: .NET resolves the config
+          # dir to "" when ~/.local/share does not exist yet, so reconfigure
+          # writes settings.json CWD-relative while the next msstore call
+          # reads the real dir and finds nothing ("SellerId is not set").
+          # Pre-creating the dir (0700: it holds tenant/client/seller ids)
+          # and pinning XDG_DATA_HOME makes both invocations agree.
+          export XDG_DATA_HOME="${HOME}/.local/share"
+          mkdir -p "${XDG_DATA_HOME}" && chmod 0700 "${XDG_DATA_HOME}"
+          dbus-run-session -- bash -c '
+            set -euo pipefail
+            eval "$(printf "%s\n" "ci" | gnome-keyring-daemon --unlock --daemonize --login)"
+            msstore reconfigure \
+              --tenantId "${AZURE_AD_TENANT_ID}" \
+              --sellerId "${SELLER_ID}" \
+              --clientId "${AZURE_AD_APPLICATION_CLIENT_ID}" \
+              --clientSecret "${AZURE_AD_APPLICATION_SECRET}"
+            msstore submission status 9P1GK6Z58B9T | tee "${RUNNER_TEMP}/store-status.txt"
+          '

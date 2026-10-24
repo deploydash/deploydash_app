@@ -1,0 +1,174 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "orchestrator"
+version = "0.1.0"
+description = "Deploy Dash backend dispatch framework and workflow plugins"
+readme = "README.md"
+license = { text = "AGPL-3.0-only" }
+requires-python = ">=3.13"
+dependencies = [
+    "pyinfra>=3.10.0,<4.0",
+]
+
+[project.scripts]
+orchestrator = "orchestrator.runner:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orchestrator"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/orchestrator/http_parts/index.html" = "orchestrator/http_parts/index.html"
+
+[tool.coverage.run]
+# Coverage measures first-party source only. Test modules are executed by
+# definition, so including them inflates the denominator and makes the headline
+# number look better than the code actually is.
+omit = [
+    "tests/*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "ruff>=0.16.5",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+# E501 (line-too-long) is redundant with `ruff format`, and actively wrong
+# for the ~145 lines it still flags here: those are single-token shell
+# script strings and URLs (see engine_infra_ops.py's server-facts probe
+# script) that the formatter deliberately leaves alone because there is no
+# safe way to wrap them. Manually splitting a shell command string risks
+# injecting whitespace/newline bugs into a command that runs on a
+# customer's server for zero readability gain. This is ruff's own
+# documented recommendation when the formatter is enabled.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Each `*_parts/__init__.py` re-exports its submodules' names as the
+# package's public surface (e.g. `from orchestrator.app_parts import
+# AppConfigValidationError` elsewhere) -- unused only from the __init__
+# file's own point of view.
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+packages = ["orchestrator"]
+strict = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# T-2.1.6 baseline (2026-09-01): 59 modules, suppressing 2,386 strict-mypy
+# errors when measured with this override stripped. The list is ordered by
+# ascending suppressed-error count (ties alphabetically), so the next paydown
+# starts with the cheapest module rather than the loudest. New source is
+# strict-checked by default; the architecture ratchet permits this list only
+# to shrink and rejects an entry that no longer needs the exemption.
+module = [
+    # 2 strict errors
+    "orchestrator.app_parts.app_plan",
+    "orchestrator.app_parts.part0_prepare_key",
+    "orchestrator.dns_parts.dns_plan",
+    "orchestrator.engine_bootstrap",
+    "orchestrator.http_parts.http_plan",
+    "orchestrator.release_helpers",
+    "orchestrator.setup_parts.setup_plan",
+    # 3 strict errors
+    "orchestrator.app_parts.common",
+    "orchestrator.app_release_runtime",
+    "orchestrator.dns_parts",
+    "orchestrator.dns_parts.common",
+    "orchestrator.dns_parts.part2_runtime",
+    "orchestrator.http_parts.common",
+    "orchestrator.http_parts.part2_runtime",
+    "orchestrator.setup_parts.common",
+    # 4 strict errors
+    "orchestrator.app_parts.repository_host_key",
+    "orchestrator.app_parts.worker_runtime",
+    "orchestrator.embedded_runtime",
+    # 5 strict errors
+    "orchestrator.railpack_contract",
+    # 6 strict errors
+    "orchestrator.setup_parts.part3_docker_prep",
+    "orchestrator.setup_parts.part4_passive_security",
+    "orchestrator.setup_security",
+    "orchestrator.workflow_registry",
+    # 7 strict errors
+    "orchestrator.firewall_parts",
+    "orchestrator.log_sanitizer",
+    # 9 strict errors
+    "orchestrator.http_parts",
+    "orchestrator.setup_parts.part1_system_foundation",
+    "orchestrator.setup_parts.part2_stability",
+    # 10 strict errors
+    "orchestrator.ssh_hostkey",
+    # 11 strict errors
+    "orchestrator.setup_parts.part5_railpack_builds",
+    # 13 strict errors
+    "orchestrator.dns_parts.part1_foundation",
+    "orchestrator.http_parts.part1_foundation",
+    # 14 strict errors
+    "orchestrator.firewall_status",
+    # 16 strict errors
+    "orchestrator.backup_error_details",
+    # 18 strict errors
+    "orchestrator.scheduler_parts",
+    "orchestrator.setup_postflight",
+    # 20 strict errors
+    "orchestrator.app_parts",
+    # 21 strict errors
+    "orchestrator.setup_parts.setup_config",
+    # 25 strict errors
+    "orchestrator.managed_software",
+    # 29 strict errors
+    "orchestrator.postgres_parts",
+    # 32 strict errors
+    "orchestrator.runner",
+    "orchestrator.workflow_executor",
+    # 33 strict errors
+    "orchestrator.container_status",
+    # 34 strict errors
+    "orchestrator.http_parts.http_config",
+    # 38 strict errors
+    "orchestrator.postgres_backup",
+    # 39 strict errors
+    "orchestrator.app_parts.part1_deploy",
+    # 46 strict errors
+    "orchestrator.engine_runtime_common",
+    # 49 strict errors
+    "orchestrator.postgres_parts.postgres_config",
+    # 79 strict errors
+    "orchestrator.engine_firewall_ops",
+    # 82 strict errors
+    "orchestrator.engine_metrics_parsers",
+    # 86 strict errors
+    "orchestrator.task_runtime",
+    # 95 strict errors
+    "orchestrator.dns_parts.dns_config",
+    # 101 strict errors
+    "orchestrator.pyinfra_runtime",
+    # 104 strict errors
+    "orchestrator.engine_scheduler_ops",
+    # 152 strict errors
+    "orchestrator.app_parts.app_config",
+    # 185 strict errors
+    "orchestrator.engine",
+    # 209 strict errors
+    "orchestrator.app_runtime_parts.*",
+    # 309 strict errors
+    "orchestrator.infra_parts.*",
+    # 353 strict errors
+    "orchestrator.postgres_runtime_parts.*",
+]
+ignore_errors = true

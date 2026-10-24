@@ -1,0 +1,72 @@
+name: Store Commit Submission
+
+# Commits the current pending Partner Center submission for certification.
+# Manual escape hatch only: the release pipeline commits automatically
+# after QA passes. Fail-closed: msstore errors out when no committable
+# pending submission exists. Uses the same secrets, masking, and Linux
+# keyring/dbus handling as the submit and watch workflows.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  commit:
+    name: Commit pending submission for certification
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Mask Store secrets in logs
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.AZURE_AD_TENANT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_SECRET }}"
+          echo "::add-mask::${{ secrets.SELLER_ID }}"
+
+      - name: Set up Microsoft Store CLI
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      # msstore persists the client secret via libsecret (GNOME Keyring /
+      # D-Bus Secret Service) on Linux. A bare ubuntu runner has neither a
+      # D-Bus session nor a keyring daemon, so reconfigure fails with a
+      # generic swallowed error. The write (reconfigure) and the read
+      # (commit) must share one live D-Bus session, hence a single step.
+      - name: Install Linux keyring for Store CLI
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gnome-keyring dbus-x11 libsecret-1-0
+
+      - name: Reconfigure and commit submission
+        shell: bash
+        env:
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+        run: |
+          # Upstream bug microsoft/msstore-cli#181: .NET resolves the config
+          # dir to "" when ~/.local/share does not exist yet, so reconfigure
+          # writes settings.json CWD-relative while the next msstore call
+          # reads the real dir and finds nothing ("SellerId is not set").
+          # Pre-creating the dir (0700: it holds tenant/client/seller ids)
+          # and pinning XDG_DATA_HOME makes both invocations agree.
+          export XDG_DATA_HOME="${HOME}/.local/share"
+          mkdir -p "${XDG_DATA_HOME}" && chmod 0700 "${XDG_DATA_HOME}"
+          dbus-run-session -- bash -c '
+            set -euo pipefail
+            if [[ -z "${AZURE_AD_TENANT_ID}${AZURE_AD_APPLICATION_CLIENT_ID}${AZURE_AD_APPLICATION_SECRET}${SELLER_ID}" ]]; then
+              echo "Store submission secrets are not configured." >&2
+              exit 1
+            fi
+            eval "$(printf "%s\n" "ci" | gnome-keyring-daemon --unlock --daemonize --login)"
+            msstore reconfigure \
+              --tenantId "${AZURE_AD_TENANT_ID}" \
+              --sellerId "${SELLER_ID}" \
+              --clientId "${AZURE_AD_APPLICATION_CLIENT_ID}" \
+              --clientSecret "${AZURE_AD_APPLICATION_SECRET}"
+            msstore submission publish 9P1GK6Z58B9T
+          '

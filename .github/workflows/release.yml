@@ -1,0 +1,299 @@
+name: Release
+
+# Tag-ground-truth release pipeline.
+#
+# 1. Maintainer pushes a tag `vX.Y.Z`. The tag is the single source of
+#    truth for the release version; the build number is this workflow's
+#    run number (monotonic per repository, never reused).
+# 2. `tests` runs the full Dart and Python suites. Nothing builds unless
+#    they pass.
+# 3. `builds` produces every platform artifact and attaches it to a DRAFT
+#    GitHub release. Nothing is downloadable yet.
+# 4. `handoff` asks the private QA repository (deploydash/deploydash_qa)
+#    to validate the draft.
+# 5. On a `qa-completed` dispatch with a passing conclusion, `validate-qa`
+#    re-validates the callback payload and `store-submit` submits the
+#    draft MSIX packages to the Microsoft Store, commits for
+#    certification, and marks the draft with the submission id.
+# 6. The scheduled Store Publish Watch (store-publish-watch.yml) flips
+#    the marked draft to published once its submission is live — no
+#    runner waits out certification (hours typical, up to three business
+#    days). Binaries become downloadable then, and only then. Releases
+#    go out in tandem: when the Apple leg lands, its live state joins
+#    the watcher's publish decision, and neither store waits on the other.
+#
+# Public-readiness: this file is written as if the repository is already
+# public. Job permissions are minimal per job, secrets only travel as
+# step `env` or action inputs (never interpolated into commands), and
+# the QA leg re-validates the callback payload (tag shape and the peeled
+# commit SHA the tag points at) instead of trusting it. Annotated tags
+# must be peeled: `git/ref/tags/...` returns the tag object, not the
+# commit.
+#
+# Store mechanics live in ui/scripts/store_*.sh so the retry workflows
+# (store-submit, store-commit-submission, store-cert-watch) share one
+# implementation with the pipeline instead of copying it.
+#
+# Rehearsal: dispatch this workflow manually on a vX.Y.Z tag ref with
+# windows_only=true to run only the Windows line (build, QA, Store,
+# publish) against that tag, skipping the macOS legs. Tags run the
+# Windows + macOS lines end to end; the Ubuntu and Snap legs stay
+# parked (no Linux QA gate yet). Re-enable the full matrix when the
+# Linux line is certified.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Rehearse only the Windows line (skip macOS, Ubuntu, and Snap legs)
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [qa-completed]
+
+permissions: {}
+
+jobs:
+  version:
+    name: Resolve release version from tag
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      build_name: ${{ steps.resolve.outputs.build_name }}
+      build_number: ${{ steps.resolve.outputs.build_number }}
+      windows_only: ${{ steps.resolve.outputs.windows_only }}
+      macos_only: ${{ steps.resolve.outputs.macos_only }}
+      winmac_only: ${{ steps.resolve.outputs.winmac_only }}
+    steps:
+      - name: Validate tag and resolve version
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_WINDOWS_ONLY: ${{ inputs.windows_only }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must look like vX.Y.Z, got: ${tag}" >&2
+            exit 1
+          fi
+          echo "build_name=${tag#v}" >> "${GITHUB_OUTPUT}"
+          echo "build_number=${GITHUB_RUN_NUMBER}" >> "${GITHUB_OUTPUT}"
+          # Dual-line default: tag pushes run Windows + macOS end to end
+          # while the Linux legs stay parked (no Linux QA gate yet).
+          # Dispatch with windows_only=true to rehearse the Windows line
+          # alone. Restore the full matrix when the Linux line is
+          # certified.
+          winmac_only=true
+          windows_only=false
+          macos_only=false
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${INPUT_WINDOWS_ONLY}" == "true" ]]; then
+            winmac_only=false
+            windows_only=true
+          fi
+          echo "winmac_only=${winmac_only}" >> "${GITHUB_OUTPUT}"
+          echo "macos_only=${macos_only}" >> "${GITHUB_OUTPUT}"
+          echo "windows_only=${windows_only}" >> "${GITHUB_OUTPUT}"
+
+  tests:
+    name: Release test gate
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.13.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Backend tests
+        working-directory: orchestrator
+        run: |
+          uv sync
+          uv run python -m unittest discover -s tests -p '*_test.py'
+
+      - name: Desktop analyze and tests
+        working-directory: ui
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+          flutter pub get
+          flutter analyze
+          flutter test
+
+  build-direct:
+    name: Direct builds (.deb, DMG, Store candidate)
+    needs: [version, tests]
+    # A reusable callee may not exceed its caller's grant; the called
+    # workflow declares contents: write (draft release uploads).
+    permissions:
+      contents: write
+    uses: ./.github/workflows/desktop-direct-builds.yml
+    with:
+      build_name: ${{ needs.version.outputs.build_name }}
+      build_number: ${{ needs.version.outputs.build_number }}
+      windows_only: ${{ needs.version.outputs.windows_only == 'true' }}
+      macos_only: ${{ needs.version.outputs.macos_only == 'true' }}
+      winmac_only: ${{ needs.version.outputs.winmac_only == 'true' }}
+    secrets: inherit
+
+  build-snap:
+    name: Snap build (draft release)
+    if: needs.version.outputs.windows_only != 'true' && needs.version.outputs.macos_only != 'true' && needs.version.outputs.winmac_only != 'true'
+    needs: [version, tests]
+    # A reusable callee may not exceed its caller's grant; the called
+    # workflow declares contents: write (draft release uploads).
+    permissions:
+      contents: write
+    uses: ./.github/workflows/desktop-snap-build.yml
+    with:
+      build_name: ${{ needs.version.outputs.build_name }}
+      build_number: ${{ needs.version.outputs.build_number }}
+    secrets: inherit
+
+  handoff:
+    name: Request private QA validation
+    if: ${{ always() && needs.version.result == 'success' && needs.build-direct.result == 'success' && (needs.build-snap.result == 'success' || needs.build-snap.result == 'skipped') }}
+    needs: [version, build-direct, build-snap]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Mask dispatch token
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.QA_DISPATCH_TOKEN }}"
+
+      - name: Dispatch QA request to deploydash_tests
+        shell: bash
+        env:
+          QA_DISPATCH_TOKEN: ${{ secrets.QA_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets.QA_DISPATCH_TOKEN }}
+        run: |
+          if [[ -z "${QA_DISPATCH_TOKEN}" ]]; then
+            echo "QA_DISPATCH_TOKEN is not configured; cannot request QA." >&2
+            exit 1
+          fi
+          gh api repos/deploydash/deploydash_qa/dispatches \
+            -f event_type=qa-requested \
+            -f client_payload[tag]="${GITHUB_REF_NAME}" \
+            -f client_payload[sha]="${GITHUB_SHA}" \
+            -f client_payload[build_name]="${{ needs.version.outputs.build_name }}" \
+            -f client_payload[build_number]="${{ needs.version.outputs.build_number }}"
+
+  validate-qa:
+    name: Validate QA callback payload
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'qa-completed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+      sha: ${{ steps.validate.outputs.sha }}
+    steps:
+      - name: Validate QA callback payload
+        id: validate
+        shell: bash
+        env:
+          QA_CONCLUSION: ${{ github.event.client_payload.conclusion }}
+          QA_TAG: ${{ github.event.client_payload.tag }}
+          QA_SHA: ${{ github.event.client_payload.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "${QA_CONCLUSION}" != "success" ]]; then
+            echo "QA reported '${QA_CONCLUSION}' for ${QA_TAG}; refusing to publish." >&2
+            exit 1
+          fi
+          if [[ ! "${QA_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "QA callback carries a malformed tag: ${QA_TAG}" >&2
+            exit 1
+          fi
+          if [[ ! "${QA_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "QA callback carries a malformed SHA for ${QA_TAG}." >&2
+            exit 1
+          fi
+          # Resolve the tag to its commit. `/git/ref/tags/...` returns the
+          # annotated-tag object SHA for signed tags; `/commits/{ref}` peels
+          # annotated and lightweight tags to the underlying commit.
+          actual_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${QA_TAG}" --jq .sha)"
+          if [[ "${actual_sha}" != "${QA_SHA}" ]]; then
+            echo "QA callback SHA (${QA_SHA}) does not match tag ${QA_TAG} commit (${actual_sha}); refusing to publish." >&2
+            exit 1
+          fi
+          echo "QA passed for ${QA_TAG} at ${QA_SHA}; submitting to stores."
+          echo "tag=${QA_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "sha=${QA_SHA}" >> "${GITHUB_OUTPUT}"
+
+  store-submit:
+    name: Submit MSIX packages to the Store
+    needs: validate-qa
+    runs-on: ubuntu-latest
+    permissions:
+      # Write: list/edit draft releases and record the submission marker.
+      contents: write
+    environment: release
+    outputs:
+      submission_id: ${{ steps.submit.outputs.submission_id }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mask Store secrets in logs
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.AZURE_AD_TENANT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_AD_APPLICATION_SECRET }}"
+          echo "::add-mask::${{ secrets.SELLER_ID }}"
+
+      - name: Detect Store packages on the draft
+        id: msix
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-qa.outputs.tag }}
+        run: |
+          # The draft carries the Partner Center .msixupload archive (the
+          # unsigned .msix itself is deliberately never attached); detect
+          # that, not a bare .msix suffix that matches nothing.
+          if gh release view "${TAG}" --json assets --jq '.assets[].name' | grep -q '\.msixupload$'; then
+            echo "has_msix=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_msix=false" >> "${GITHUB_OUTPUT}"
+            echo "No Store packages on ${TAG}; skipping Store submission."
+          fi
+
+      - name: Set up Microsoft Store CLI
+        if: steps.msix.outputs.has_msix == 'true'
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      - name: Install Linux keyring for Store CLI
+        if: steps.msix.outputs.has_msix == 'true'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gnome-keyring dbus-x11 libsecret-1-0
+
+      - name: Submit packages and commit for certification
+        id: submit
+        if: steps.msix.outputs.has_msix == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+        run: |
+          bash ui/scripts/store_submit_release.sh "${{ needs.validate-qa.outputs.tag }}"

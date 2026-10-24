@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Server active | Managed by Deploy Dash</title>
+	<meta name="description" content="This server is active and is managed by Deploy Dash. Content is currently being prepared for this address.">
+	<meta name="robots" content="index, follow">
+
+	<style>
+		:root {
+			--bg-color: #0f172a;
+			--card-bg: rgba(30, 41, 59, 0.6);
+			--accent-color: #38bdf8;
+			--text-main: #f8fafc;
+			--text-muted: #94a3b8;
+			--focus-ring: #60a5fa;
+		}
+
+		/* Accessibility: Respect user preference for reduced motion */
+		@media (prefers-reduced-motion: reduce) {
+			.pulse {
+				animation: none !important;
+			}
+		}
+
+		body {
+			margin: 0;
+			padding: 0;
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			background: radial-gradient(circle at top left, #1e293b 0%, #0f172a 100%);
+			color: var(--text-main);
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			min-height: 100vh;
+			/* Better than fixed height */
+			overflow: hidden;
+		}
+
+		.container {
+			text-align: center;
+			padding: 3.5rem 2rem;
+			background: var(--card-bg);
+			backdrop-filter: blur(16px);
+			-webkit-backdrop-filter: blur(16px);
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			border-radius: 32px;
+			box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+			max-width: 440px;
+			width: 90%;
+		}
+
+		/* A11y: Ensure the status has a semantic meaning */
+		.status-indicator {
+			display: inline-flex;
+			align-items: center;
+			gap: 10px;
+			background: rgba(255, 255, 255, 0.05);
+			padding: 8px 20px;
+			border-radius: 99px;
+			font-size: 0.75rem;
+			font-weight: 600;
+			letter-spacing: 0.05em;
+			text-transform: uppercase;
+			color: var(--accent-color);
+			margin-bottom: 2rem;
+		}
+
+		.pulse {
+			width: 8px;
+			height: 8px;
+			background-color: var(--accent-color);
+			border-radius: 50%;
+			box-shadow: 0 0 10px var(--accent-color);
+			/* Added a gentle animation for "Life" */
+			animation: pulse-glow 2s infinite ease-in-out;
+		}
+
+		@keyframes pulse-glow {
+
+			0%,
+			100% {
+				opacity: 1;
+				transform: scale(1);
+			}
+
+			50% {
+				opacity: 0.6;
+				transform: scale(1.1);
+			}
+		}
+
+		h1 {
+			font-weight: 600;
+			font-size: 1.5rem;
+			margin: 0 0 1rem 0;
+			letter-spacing: -0.01em;
+		}
+
+		p {
+			color: var(--text-muted);
+			line-height: 1.7;
+			margin-bottom: 2.5rem;
+			font-size: 0.95rem;
+		}
+
+		.brand-watermark {
+			font-size: 0.8rem;
+			color: var(--text-muted);
+			opacity: 0.7;
+			text-decoration: none;
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			transition: opacity 0.3s ease;
+		}
+
+		/* A11y: Clear focus states for keyboard users */
+		.brand-watermark:focus-visible {
+			outline: 2px solid var(--focus-ring);
+			outline-offset: 4px;
+			border-radius: 4px;
+			opacity: 1;
+		}
+
+		.brand-watermark:hover {
+			opacity: 1;
+		}
+
+		.brand-watermark strong {
+			color: var(--text-main);
+			font-weight: 600;
+		}
+	</style>
+</head>
+
+<body>
+
+	<main class="container" role="main">
+		<div class="status-indicator" aria-label="Current Server Status: Online">
+			<span class="pulse" aria-hidden="true"></span>
+			System online
+		</div>
+
+		<h1>{{DEFAULT_PAGE_TITLE}}</h1>
+
+		<p>{{DEFAULT_PAGE_MESSAGE}}</p>
+
+		<footer>
+			<a href="https://www.deploydash.com/" class="brand-watermark" title="Visit Deploy Dash">
+				<span>Server managed via</span>
+				<strong>Deploy Dash</strong>
+			</a>
+		</footer>
+	</main>
+
+</body>
+
+</html>

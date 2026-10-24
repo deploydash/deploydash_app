@@ -1,0 +1,108 @@
+name: deploydash
+title: Deploy Dash
+adopt-info: deploydash
+base: core24
+summary: Self-hosted deployment manager for your own servers
+description: |
+  Deploy Dash is a desktop control plane for deploying web apps, managing
+  PostgreSQL services, and operating day-2 infrastructure on your own
+  servers.
+license: AGPL-3.0-or-later
+website: https://www.deploydash.com
+source-code: https://github.com/deploydash/deploydash
+contact: mailto:info@deploydash.com
+issues: https://github.com/deploydash/deploydash/issues
+icon: snap/gui/icon.png
+grade: stable
+confinement: strict
+
+# libbridge is loaded explicitly by Dart FFI, so the ELF dependency scanner
+# cannot discover its consumer.
+lint:
+  ignore:
+    - library:
+        - lib/libbridge.so
+        - lib/libpython3.13.so.1.0
+
+platforms:
+  amd64:
+
+slots:
+  deploydash-dbus:
+    interface: dbus
+    bus: session
+    name: com.deploydash.desktop
+
+# Private shared memory for Python multiprocessing workers (fork AND spawn
+# alike): strict confinement denies sem_open() on the host /dev/shm, so
+# Event/Lock fail with EPERM without this. snapd bind-mounts a private dir
+# over /dev/shm for the snap (snapd >= 2.55.3, auto-connect). None of the
+# other plugs affect this, and snap layouts cannot fix /dev (excluded).
+plugs:
+  shared-memory:
+    interface: shared-memory
+    private: true
+
+apps:
+  deploydash:
+    command: deploydash
+    desktop: usr/share/applications/com.deploydash.desktop.desktop
+    extensions:
+      - gnome
+    plugs:
+      - home
+      - network
+      - network-bind
+      - removable-media
+      - shared-memory
+    slots:
+      - deploydash-dbus
+
+parts:
+  deploydash:
+    plugin: nil
+    source: .
+    build-snaps:
+      - astral-uv/latest/stable
+      - flutter/latest/stable
+    build-packages:
+      - clang
+      - cmake
+      - libgtk-3-dev
+      - liblzma-dev
+      - ninja-build
+      - pkg-config
+    override-build: |
+      set -eux
+      VERSION="$(cat "$CRAFT_PART_SRC/ui/packaging/snap/build-version.txt")"
+      craftctl set version="${VERSION}"
+      cd "$CRAFT_PART_SRC/ui"
+      flutter config --enable-linux-desktop
+      flutter pub get
+      uv python install 3.13
+      PYTHON_EXE="$(uv python find 3.13)"
+      mapfile -t BUILD_ARGS \
+        < "$CRAFT_PART_SRC/ui/packaging/snap/build-args.txt"
+      DEPLOYDASH_ORCHESTRATOR_ROOT="$CRAFT_PART_SRC/orchestrator" \
+        ORCHESTRATOR_VENV_PYTHON="$PYTHON_EXE" \
+        ORCHESTRATOR_PACKAGE_SOURCE=local-wheel \
+        ORCHESTRATOR_ALLOW_LOCAL_FALLBACK=0 \
+        flutter build linux --release "${BUILD_ARGS[@]}"
+      BUNDLE_DIR="$CRAFT_PART_SRC/ui/build/linux/x64/release/bundle"
+      test -d "$BUNDLE_DIR"
+      cp -a "$BUNDLE_DIR/." "$CRAFT_PART_INSTALL/"
+      install -Dm644 \
+        "$CRAFT_PART_SRC/ui/packaging/linux/deploydash.desktop" \
+        "$CRAFT_PART_INSTALL/usr/share/applications/com.deploydash.desktop.desktop"
+      sed -i 's|^Icon=.*|Icon=${SNAP}/meta/gui/icon.png|' \
+        "$CRAFT_PART_INSTALL/usr/share/applications/com.deploydash.desktop.desktop"
+      install -Dm644 \
+        "$CRAFT_PART_SRC/ui/assets/icons/app_icon.png" \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/256x256/apps/com.deploydash.desktop.png"
+      install -Dm644 \
+        "$CRAFT_PART_SRC/ui/assets/icons/app_icon.png" \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/512x512/apps/com.deploydash.desktop.png"
+    override-prime: |
+      craftctl default
+      find "$CRAFT_PRIME/lib/python3.13/lib-dynload" \
+        -maxdepth 1 -type f -name '_tkinter.*.so' -delete

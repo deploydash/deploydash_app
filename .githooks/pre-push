@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+
+# The workstation push gate. Keep this under 5 minutes so it remains practical
+# to run before every push; the scoped coverage gates stay in CI (run them
+# locally only for touched areas), and the pre-tag release tier lives in
+# orchestrator/RELEASING.md.
+set -euo pipefail
+
+repository_root="$(git rev-parse --show-toplevel)"
+cd "${repository_root}"
+
+printf '%s\n' 'Running Deploy Dash pre-push checks…'
+
+# The three tiers are independent. Run them concurrently and collect every
+# status so one slow tier never hides another tier's failure.
+desktop_status=0
+backend_status=0
+repo_status=0
+
+(
+  set -e
+  cd ui
+  flutter analyze
+  flutter test
+  bash scripts/validate_release_scaffolds.sh
+  flutter pub run build_runner build --delete-conflicting-outputs
+  git diff --exit-code -- ui || {
+    echo "Generated Dart code is out of date: commit the build_runner result and push again." >&2
+    exit 1
+  }
+) &
+desktop_pid=$!
+
+set +e
+(
+  set -e
+  cd orchestrator
+  uv run ruff check
+  uv run ruff format --check
+  uv run mypy
+  uv run python -m unittest discover -s tests -p '*_test.py'
+) &
+backend_pid=$!
+
+(
+  set -e
+  # Secret-masking audit. The enforced copy lives in .github/workflows/ci.yml
+  # ("Every consumed secret must be masked before use"); this mirrors its
+  # logic so a push fails here instead of in CI.
+  python3 - <<'PY'
+import re
+from pathlib import Path
+failures = []
+for path in sorted(Path(".github/workflows").glob("*.yml")):
+    text = path.read_text(encoding="utf-8")
+    consumed = set(re.findall(r"\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}", text))
+    consumed.discard("GITHUB_TOKEN")
+    masked = set(re.findall(r"add-mask::\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}", text))
+    unmasked = sorted(consumed - masked)
+    if unmasked:
+        failures.append(f"{path}: unmasked secrets {unmasked}")
+if failures:
+    raise SystemExit("\n".join(failures))
+print("All consumed secrets are masked.")
+PY
+  # Workflow YAML must not contain duplicate mapping keys: PyYAML takes the
+  # last silently, which once dropped DEPLOYDASH_MACOS_ARCHS from the QA job.
+  python3 - <<'PY'
+import glob
+import yaml
+class DupError(Exception):
+    pass
+class Loader(yaml.SafeLoader):
+    pass
+def construct_mapping(loader, node, deep=False):
+    keys = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=True)
+        if key in keys:
+            raise DupError(f"duplicate key: {key}")
+        keys.add(key)
+    return loader.construct_mapping(node, deep)
+Loader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping)
+for path in sorted(glob.glob(".github/workflows/*.yml")):
+    list(yaml.load_all(open(path), Loader=Loader))
+print("No duplicate workflow keys.")
+PY
+) &
+repo_pid=$!
+
+wait "${desktop_pid}"
+desktop_status=$?
+wait "${backend_pid}"
+backend_status=$?
+wait "${repo_pid}"
+repo_status=$?
+set -e
+
+if ((desktop_status != 0 || backend_status != 0 || repo_status != 0)); then
+  exit 1
+fi
+
+printf '%s\n' 'Deploy Dash pre-push checks passed.'

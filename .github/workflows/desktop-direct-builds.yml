@@ -1,0 +1,608 @@
+name: Desktop Direct Builds
+
+on:
+  workflow_call:
+    inputs:
+      build_name:
+        description: Desktop build version name (X.Y.Z from the release tag)
+        required: false
+        type: string
+      build_number:
+        description: Monotonic build number (GitHub run number of the release)
+        required: false
+        type: string
+      windows_only:
+        description: Skip non-Windows legs (Windows-line rehearsal)
+        required: false
+        type: boolean
+        default: false
+      macos_only:
+        description: Run only the macOS DMG leg (laptop runner rehearsal)
+        required: false
+        type: boolean
+        default: false
+      winmac_only:
+        description: Run only the Windows and macOS legs (dual-line release, no Linux)
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      DEPLOYDASH_GITHUB_CLIENT_ID:
+        required: false
+      DEPLOYDASH_GITHUB_CLIENT_SECRET:
+        required: false
+      DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK:
+        required: false
+      DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE:
+        required: false
+      DEPLOYDASH_AMPLITUDE_API_KEY:
+        required: false
+      DEPLOYDASH_APPLE_ID:
+        required: false
+      DEPLOYDASH_APPLE_TEAM_ID:
+        required: false
+      DEPLOYDASH_APPLE_APP_PASSWORD:
+        required: false
+      DEPLOYDASH_MACOS_SIGN_CERT_P12_BASE64:
+        required: false
+      DEPLOYDASH_MACOS_SIGN_CERT_P12_PASSWORD:
+        required: false
+  workflow_dispatch:
+    inputs:
+      build_name:
+        description: Optional override for the desktop build version name
+        required: false
+        type: string
+      build_number:
+        description: Optional override for the desktop build version number
+        required: false
+        type: string
+      macos_only:
+        description: Run only the macOS DMG leg (laptop runner rehearsal)
+        type: boolean
+        default: true
+      winmac_only:
+        description: Run only the Windows and macOS legs (dual-line release, no Linux)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  ORCHESTRATOR_PACKAGE_SOURCE: local-wheel
+  ORCHESTRATOR_ALLOW_LOCAL_FALLBACK: "0"
+
+jobs:
+  ubuntu-deb:
+    name: Build and smoke-test Ubuntu 24.04 .deb (${{ matrix.package_arch }})
+    if: ${{ !inputs.windows_only && !inputs.macos_only && !inputs.winmac_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package_arch: amd64
+            runner: ubuntu-24.04
+          - package_arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      DEB_ARCHITECTURE: ${{ matrix.package_arch }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mask consumed secrets in logs
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Linux packaging dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            dbus-x11 x11-utils xvfb
+
+      - name: Resolve build metadata
+        shell: bash
+        env:
+          INPUT_BUILD_NAME: ${{ inputs.build_name }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          BACKEND_ROOT="${DEPLOYDASH_ORCHESTRATOR_ROOT:-orchestrator}"
+          python3 "${BACKEND_ROOT}/scripts/resolve_build_metadata.py"
+
+      - name: Create optional CI Dart defines
+        uses: ./.github/actions/ci-dart-defines
+        with:
+          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
+          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
+          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
+          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
+          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
+
+      - name: Build Ubuntu .deb
+        shell: bash
+        run: |
+          cd ui
+          flutter config --enable-linux-desktop
+          flutter pub get
+          bash scripts/build_deb.sh
+
+      - name: Upload Ubuntu .deb artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: deploydash-ubuntu-deb-${{ matrix.package_arch }}
+          path: ui/build/deb/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach Ubuntu .deb to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # Parallel build jobs share one draft release; a lost create race
+          # must fall through to the upload, while a real failure (auth,
+          # permissions) still fails when the re-check finds nothing.
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+            gh release create "${tag}" --draft --title "Deploy Dash ${tag}" --generate-notes \
+              || gh release view "${tag}" >/dev/null
+          fi
+          # shellcheck disable=SC2086
+          gh release upload "${tag}" ui/build/deb/*.deb --clobber
+
+  macos-dmg:
+    name: Build signed and notarized macOS DMG (${{ matrix.arch }})
+    # macos_only rehearsal, or full/non-windows_only release builds.
+    if: ${{ inputs.macos_only || !inputs.windows_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # arm64 on the desk Mac self-hosted runner (dd-mac-dmg).
+          # x64 restored on macos-26-intel when hosted Mac minutes allow:
+          #   - arch: x64
+          #     dmg_arch: x64
+          #     runs-on: macos-26-intel
+          - arch: arm64
+            dmg_arch: arm64
+    runs-on: [self-hosted, macOS, ARM64, dd-mac-dmg]
+    env:
+      DEPLOYDASH_APPLE_ID: ${{ secrets.DEPLOYDASH_APPLE_ID }}
+      DEPLOYDASH_APPLE_TEAM_ID: ${{ secrets.DEPLOYDASH_APPLE_TEAM_ID }}
+      DEPLOYDASH_APPLE_APP_PASSWORD: ${{ secrets.DEPLOYDASH_APPLE_APP_PASSWORD }}
+      DEPLOYDASH_MACOS_ARCH: ${{ matrix.dmg_arch }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mask consumed secrets in logs
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.DEPLOYDASH_APPLE_ID }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_APPLE_TEAM_ID }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_APPLE_APP_PASSWORD }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_MACOS_SIGN_CERT_P12_BASE64 }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_MACOS_SIGN_CERT_P12_PASSWORD }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python 3.13.14 with uv
+        shell: bash
+        run: |
+          # actions/setup-python is unusable on this leg: its macOS builds
+          # are non-relocatable and require a writable
+          # /Users/runner/hostedtoolcache (admin-owned on the desk Mac).
+          # uv-managed Python installs into the runner user's own
+          # directories instead.
+          uv python install 3.13.14
+          uv_python="$(uv python find 3.13.14)"
+          echo "Using uv-managed Python: ${uv_python}"
+          version="$("${uv_python}" -c 'import platform; print(platform.python_version())')"
+          if [[ "${version}" != "3.13.14" ]]; then
+            echo "Expected Python 3.13.14, resolved ${version}." >&2
+            exit 1
+          fi
+          echo "$(dirname "${uv_python}")" >> "${GITHUB_PATH}"
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Import macOS Developer ID certificate
+        shell: bash
+        env:
+          SIGNING_P12_BASE64: ${{ secrets.DEPLOYDASH_MACOS_SIGN_CERT_P12_BASE64 }}
+          SIGNING_P12_PASSWORD: ${{ secrets.DEPLOYDASH_MACOS_SIGN_CERT_P12_PASSWORD }}
+        run: |
+          if [[ -z "${SIGNING_P12_BASE64}" || -z "${SIGNING_P12_PASSWORD}" ]]; then
+            echo "The macOS signing certificate secrets are required." >&2
+            exit 1
+          fi
+          if [[ -z "${DEPLOYDASH_APPLE_ID}" || -z "${DEPLOYDASH_APPLE_TEAM_ID}" || -z "${DEPLOYDASH_APPLE_APP_PASSWORD}" ]]; then
+            echo "The Apple notarization secrets are required." >&2
+            exit 1
+          fi
+          CERTIFICATE_PATH="${RUNNER_TEMP}/deploydash-signing.p12"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/deploydash-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          umask 077
+          echo "DEPLOYDASH_MACOS_CI_KEYCHAIN=${KEYCHAIN_PATH}" >> "${GITHUB_ENV}"
+          printf '%s' "${SIGNING_P12_BASE64}" | /usr/bin/base64 -D > "${CERTIFICATE_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERTIFICATE_PATH}" \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${SIGNING_P12_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}"
+          # Append, never replace: the Developer ID intermediate lives in
+          # the login keychain on this Mac, and replacing the search list
+          # makes the chain unbuildable (codesign errSecInternalComponent).
+          # The previous list is restored by the cleanup step below.
+          KEYCHAIN_LIST_BEFORE="${RUNNER_TEMP}/deploydash-keychains-before.txt"
+          security list-keychains -d user \
+            | sed -e 's/^ *//' -e 's/^"//' -e 's/"$//' \
+            > "${KEYCHAIN_LIST_BEFORE}"
+          existing_keychains=()
+          while IFS= read -r existing; do
+            [[ -n "${existing}" ]] && existing_keychains+=("${existing}")
+          done < "${KEYCHAIN_LIST_BEFORE}"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" "${existing_keychains[@]}"
+          security find-identity -v -p codesigning
+
+      - name: Resolve build metadata
+        shell: bash
+        env:
+          INPUT_BUILD_NAME: ${{ inputs.build_name }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          BACKEND_ROOT="${DEPLOYDASH_ORCHESTRATOR_ROOT:-orchestrator}"
+          python3 "${BACKEND_ROOT}/scripts/resolve_build_metadata.py"
+
+      - name: Require resolved build version
+        shell: bash
+        run: |
+          if [[ -z "${DEPLOYDASH_BUILD_NAME:-}" ]]; then
+            echo "macos-dmg needs inputs.build_name on branch dispatch (tags resolve from the ref); build_macos_dmg.sh refuses unversioned production DMGs." >&2
+            exit 1
+          fi
+
+      - name: Create optional CI Dart defines
+        uses: ./.github/actions/ci-dart-defines
+        with:
+          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
+          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
+          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
+          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
+          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
+
+      - name: Build signed, notarized, and stapled macOS DMG
+        shell: bash
+        run: |
+          cd ui
+          flutter config --enable-macos-desktop
+          flutter pub get
+          bash scripts/build_macos_dmg.sh
+
+      - name: Report macOS bundle sizes
+        shell: bash
+        run: |
+          BACKEND_ROOT="${DEPLOYDASH_ORCHESTRATOR_ROOT:-orchestrator}"
+          APP_BUNDLE="$(
+            python3 "${BACKEND_ROOT}/scripts/release_contracts.py" locate-macos-app-bundle \
+              --release-dir ui/build/macos/Build/Products/Release
+          )"
+          echo "App bundle:"
+          du -sh "${APP_BUNDLE}"
+          echo "Frameworks:"
+          du -sh "${APP_BUNDLE}/Contents/Frameworks" || true
+          echo "Embedded backend runtime:"
+          du -sh "${APP_BUNDLE}/Contents/Resources/data/py" || true
+          echo "Embedded Python runtime:"
+          du -sh "${APP_BUNDLE}/Contents/Resources/python" "${APP_BUNDLE}/Contents/Frameworks/Python.framework" 2>/dev/null || true
+          echo "DMG:"
+          du -sh ui/build/macos/distribution/DeployDash-*.dmg
+
+      - name: Upload macOS DMG artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: deploydash-macos-${{ matrix.arch }}
+          path: ui/build/macos/distribution/DeployDash-*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach macOS DMG to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # Parallel build jobs share one draft release; a lost create race
+          # must fall through to the upload, while a real failure (auth,
+          # permissions) still fails when the re-check finds nothing.
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+            gh release create "${tag}" --draft --title "Deploy Dash ${tag}" --generate-notes \
+              || gh release view "${tag}" >/dev/null
+          fi
+          # shellcheck disable=SC2086
+          gh release upload "${tag}" ui/build/macos/distribution/DeployDash-*.dmg --clobber
+
+      - name: Remove macOS signing keychain
+        if: always()
+        shell: bash
+        run: |
+          # Restore the keychain search list saved by the import step: this
+          # runner is a persistent personal Mac, not an ephemeral VM.
+          KEYCHAIN_LIST_BEFORE="${RUNNER_TEMP}/deploydash-keychains-before.txt"
+          if [[ -f "${KEYCHAIN_LIST_BEFORE}" ]]; then
+            restored_keychains=()
+            while IFS= read -r restored; do
+              [[ -n "${restored}" ]] && restored_keychains+=("${restored}")
+            done < "${KEYCHAIN_LIST_BEFORE}"
+            if ((${#restored_keychains[@]} > 0)); then
+              security list-keychains -d user -s "${restored_keychains[@]}" || true
+            fi
+            rm -f "${KEYCHAIN_LIST_BEFORE}"
+          fi
+          if [[ -n "${DEPLOYDASH_MACOS_CI_KEYCHAIN:-}" ]]; then
+            security delete-keychain "${DEPLOYDASH_MACOS_CI_KEYCHAIN}" || true
+          fi
+          rm -f "${RUNNER_TEMP}/deploydash-signing.p12"
+
+  # Certifying macOS QA (install + server onboarding) lives in
+  # deploydash_qa desk-macos-slim.yml on the same dd-mac-dmg runner.
+  # Do not reintroduce an app-repo macos-qa-slim install check.
+
+  windows-store:
+    name: Build Windows Store submission candidate (${{ matrix.arch }})
+    if: ${{ !inputs.macos_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x64 only for now: cryptography publishes no win_arm64 wheel,
+          # so the arm64 leg cannot install the backend dependencies.
+          # Restore the arm64 entry when upstream ships that wheel; the
+          # published Store package is x64-only today.
+          - arch: x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      DEPLOYDASH_WINDOWS_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mask consumed secrets in logs
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}"
+          echo "::add-mask::${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Set up Flutter
+        uses: ./.github/actions/setup-flutter
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Resolve build metadata
+        shell: bash
+        env:
+          INPUT_BUILD_NAME: ${{ inputs.build_name }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          BACKEND_ROOT="${DEPLOYDASH_ORCHESTRATOR_ROOT:-orchestrator}"
+          python3 "${BACKEND_ROOT}/scripts/resolve_build_metadata.py"
+
+      - name: Create optional CI Dart defines
+        uses: ./.github/actions/ci-dart-defines
+        with:
+          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
+          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
+          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
+          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
+          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
+
+      - name: Build unsigned Partner Center submission
+        shell: pwsh
+        run: |
+          cd ui
+          flutter config --enable-windows-desktop
+          flutter pub get
+          powershell -ExecutionPolicy Bypass -File scripts/build_windows_store.ps1 -Arch ${{ matrix.arch }}
+
+      - name: Upload private Windows Store candidate
+        uses: actions/upload-artifact@v6
+        with:
+          name: deploydash-windows-store-candidate-${{ matrix.arch }}
+          path: |
+            ui/build/windows/installer/DeployDash_*_${{ matrix.arch }}.msixupload
+            ui/build/windows/installer/DeployDash_*_${{ matrix.arch }}.msix
+            ui/build/windows/installer/DeployDash_*_${{ matrix.arch }}.appxsym
+            ui/build/windows/installer/DeployDash_*_${{ matrix.arch }}.build-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach Windows Store candidate to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # Parallel build jobs share one draft release; a lost create race
+          # must fall through to the upload, while a real failure (auth,
+          # permissions) still fails when the re-check finds nothing.
+          # The unsigned .msix itself is never attached: it cannot be
+          # installed by double-click, and shipping it would burn trust.
+          # Only the Partner Center submission archive, the build manifest,
+          # and the debug symbols travel with the draft. The publish watch
+          # strips everything but the DMG and the Windows web installer
+          # when the draft flips to published.
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+            gh release create "${tag}" --draft --title "Deploy Dash ${tag}" --generate-notes \
+              || gh release view "${tag}" >/dev/null
+          fi
+          # shellcheck disable=SC2086
+          gh release upload "${tag}" \
+            ui/build/windows/installer/DeployDash_*_${{ matrix.arch }}.msixupload \
+            ui/build/windows/installer/DeployDash_*_${{ matrix.arch }}.build-manifest.json \
+            --clobber
+
+  windows-qa-slim:
+    name: Slim Windows install check (${{ matrix.arch }})
+    if: ${{ !inputs.macos_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Mirrors the windows-store matrix (x64 only; see above).
+          - arch: x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    needs: windows-store
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Download Windows Store candidate
+        uses: actions/download-artifact@v7
+        with:
+          name: deploydash-windows-store-candidate-${{ matrix.arch }}
+          path: qa-msix
+
+      - name: Validate package identity and payload digest
+        shell: pwsh
+        env:
+          DEPLOYDASH_WINDOWS_ARCH: ${{ matrix.arch }}
+        run: |
+          $msix = Get-ChildItem qa-msix/DeployDash_*_${{ matrix.arch }}.msix | Select-Object -First 1
+          $appxsym = Get-ChildItem qa-msix/DeployDash_*_${{ matrix.arch }}.appxsym | Select-Object -First 1
+          $msixupload = Get-ChildItem qa-msix/DeployDash_*_${{ matrix.arch }}.msixupload | Select-Object -First 1
+          $manifest = Get-ChildItem qa-msix/DeployDash_*_${{ matrix.arch }}.build-manifest.json | Select-Object -First 1
+          if (-not $msix -or -not $appxsym -or -not $msixupload -or -not $manifest) {
+            throw "Windows Store candidate artifact set is incomplete for ${{ matrix.arch }}."
+          }
+          $unpacked = Join-Path ([IO.Path]::GetTempPath()) "dd-msix-validate"
+          if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
+          # Expand-Archive includes MakeAppx footprint files; the payload
+          # digest helper ignores those so this matches the build-root digest.
+          Expand-Archive -Path $msix.FullName -DestinationPath $unpacked
+          uv run --project orchestrator python orchestrator/scripts/release_contracts.py validate-windows-store-build-manifest `
+            --manifest $manifest.FullName `
+            --arch ${{ matrix.arch }} `
+            --package-root $unpacked `
+            --msix $msix.FullName `
+            --appxsym $appxsym.FullName `
+            --msixupload $msixupload.FullName
+
+  release-checksums:
+    name: Attach consolidated release checksums
+    # always(): a skipped ubuntu-deb (winmac tags) must not skip this
+    # job — plain `needs` only runs when every dependency succeeded.
+    # The result checks below keep it fail-closed on real build
+    # failures while accepting the parked Linux leg in winmac mode.
+    if: ${{ always() && !inputs.windows_only && !inputs.macos_only && startsWith(github.ref, 'refs/tags/') && needs.macos-dmg.result == 'success' && needs.windows-store.result == 'success' && (needs.ubuntu-deb.result == 'success' || inputs.winmac_only) }}
+    needs: [ubuntu-deb, macos-dmg, windows-store]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Ubuntu packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: deploydash-ubuntu-deb-*
+          merge-multiple: true
+
+      - name: Download macOS packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: deploydash-macos-*
+          merge-multiple: true
+
+      - name: Download Windows Store candidates
+        uses: actions/download-artifact@v7
+        with:
+          pattern: deploydash-windows-store-candidate-*
+          merge-multiple: true
+
+      - name: Generate consolidated SHA256SUMS
+        shell: bash
+        env:
+          WINMAC_ONLY: ${{ inputs.winmac_only }}
+        run: |
+          shopt -s nullglob
+          assets=(
+            DeployDash-*.dmg
+            deploydash_*.deb
+            DeployDash_*.msixupload
+            DeployDash_*.build-manifest.json
+          )
+          # Per-line asset counts for today's single-arch matrix (macOS
+          # arm64, Windows x64, Ubuntu amd64+arm64): full-matrix tags see
+          # 2 debs + 1 dmg + 1 msixupload + 1 manifest; winmac tags see
+          # 1 dmg + 1 msixupload + 1 manifest. Single-line modes never
+          # reach this job (see its `if:`), so anything else is a bug.
+          if [[ "${WINMAC_ONLY}" == "true" ]]; then
+            expected=3
+          else
+            expected=5
+          fi
+          if [[ "${#assets[@]}" -ne "${expected}" ]]; then
+            echo "Expected ${expected} attached release assets, found ${#assets[@]}." >&2
+            printf '%s\n' "${assets[@]}" >&2
+            exit 1
+          fi
+          IFS=$'\n' assets=($(printf '%s\n' "${assets[@]}" | LC_ALL=C sort))
+          unset IFS
+          sha256sum "${assets[@]}" > SHA256SUMS
+
+      - name: Attach SHA256SUMS to GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --clobber
