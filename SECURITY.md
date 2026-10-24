@@ -26,8 +26,9 @@ of these private channels:
 Include:
 
 - the Deploy Dash version and platform (Windows/macOS, Store/DMG),
-- what you expected vs what happened,
-- steps to reproduce (proof-of-concept preferred),
+- where the vulnerability can be observed and its type
+  (for example: "command injection in the one-off command runner"),
+- steps to reproduce as a benign, non-destructive proof of concept,
 - your assessment of the impact (who is affected and how).
 
 ## Scope
@@ -50,10 +51,35 @@ Out of scope:
 
 ## What to expect
 
-- Acknowledgement within 7 days (best effort; this is a small team).
+- Acknowledgement within 5 working days and triage within
+  10 working days (best effort; this is a small team).
 - Severity assessment and a fix timeline after reproduction.
+- If you want a status update, please ask no more than once every
+  14 days so we can focus on the fix.
+- We will notify you when the vulnerability is remediated and may
+  ask you to confirm the fix covers it.
 - Coordinated disclosure: a fix and release first, public details
-  after users have had a reasonable window to update.
+  after users have had a reasonable window to update — please
+  coordinate the release timing with us.
 - Credit in the release notes if you want it (just say so).
 
 There is no paid bug-bounty programme.
+
+## Ground rules
+
+When researching vulnerabilities in our products and services:
+
+- Do not break any applicable law.
+- Do not access unnecessary amounts of data, and do not share or
+  redistribute anything you retrieve; securely delete it as soon as
+  it is no longer needed.
+- Do not modify data, disrupt services, or use high-intensity,
+  destructive, or denial-of-service techniques.
+- Do not demand payment for disclosure.
+- Please avoid reports on non-exploitable issues or generic
+  best-practice deviations (missing security headers, TLS cipher
+  preferences) rather than concrete vulnerabilities.
+
+This policy does not authorise any activity that is inconsistent
+with the law or that would put us or our partners in breach of
+legal obligations.
