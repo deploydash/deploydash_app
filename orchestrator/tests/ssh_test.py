@@ -394,6 +394,51 @@ class TestSSHConnectivity(unittest.TestCase):
         self.assertNotIn("ssh_key", connector_data)
 
     @patch("engine.create_runtime_session")
+    def test_handle_request_check_server_disables_sha1_ssh_algorithms(
+        self,
+        mock_create_runtime_session,
+    ):
+        # GHSA-r374-rxx8-8654: paramiko accepts SHA-1 RSA signatures with
+        # no fixed release pyinfra allows, so refuse the SHA-1 key
+        # algorithms on every connection instead.
+        host = _FakeHost(
+            {
+                facts.server.Kernel: "Linux",
+                facts.server.LinuxDistribution: ubuntu_linux_distribution(
+                    "24.04",
+                    pretty_name="Ubuntu 24.04.1 LTS",
+                ),
+                facts.server.Arch: "x86_64",
+                facts.hardware.Memory: 4096,
+                facts.hardware.BlockDevices: {"/dev/vda1": {"blocks": "83886080", "mount": "/"}},
+            },
+        )
+        mock_create_runtime_session.return_value = _FakeSession(host)
+
+        payload = json.dumps(
+            {
+                "action": "run_workflow",
+                "workflow_id": "server",
+                "operation_id": "check",
+                "ip": "1.2.3.4",
+                "username": "user",
+                "password": "pwd",
+            }
+        )
+        result = json.loads(handle_request(payload))
+        self.assertEqual(result["status"], "success")
+
+        _, kwargs = mock_create_runtime_session.call_args
+        disabled = kwargs["connector_data"]["ssh_paramiko_connect_kwargs"]["disabled_algorithms"]
+        self.assertEqual(
+            disabled,
+            {
+                "keys": ["ssh-rsa", "ssh-dss"],
+                "pubkeys": ["ssh-rsa", "ssh-dss"],
+            },
+        )
+
+    @patch("engine.create_runtime_session")
     def test_handle_request_check_server_ignores_key_path_auth(
         self,
         mock_create_runtime_session,
