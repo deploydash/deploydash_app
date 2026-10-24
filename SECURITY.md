@@ -18,10 +18,10 @@ are updated only when a fix backports cleanly; otherwise, upgrade.
 **Do not open a public issue for a suspected vulnerability.** Use one
 of these private channels:
 
-1. Preferred: the repository's **Security** tab →
+1. Preferred: email `security@deploydash.com` with `[SECURITY]`
+   in the subject line.
+2. Fallback: the repository's **Security** tab →
    **Report a vulnerability** (GitHub private vulnerability reporting).
-2. Fallback: email `info@deploydash.com` with `[SECURITY]` in the
-   subject line.
 
 Include:
 
