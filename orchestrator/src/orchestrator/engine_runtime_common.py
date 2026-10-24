@@ -127,9 +127,16 @@ def _build_connector_data(
         "ssh_allow_agent": False,
         "ssh_look_for_keys": False,
         "ssh_connect_retries": 0,
+        # GHSA-r374-rxx8-8654: paramiko accepts SHA-1 RSA signatures and
+        # no fixed release fits pyinfra's paramiko<5 cap, so refuse the
+        # SHA-1 key algorithms here. RSA keys keep working via SHA-2.
         "ssh_paramiko_connect_kwargs": {
             "auth_timeout": auth_timeout,
             "banner_timeout": banner_timeout,
+            "disabled_algorithms": {
+                "keys": ["ssh-rsa", "ssh-dss"],
+                "pubkeys": ["ssh-rsa", "ssh-dss"],
+            },
         },
     }
 
