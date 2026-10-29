@@ -32,6 +32,9 @@ jobs:
           "SessionId=$((Get-Process -Id $PID).SessionId)"
           "UserInteractive=$([Environment]::UserInteractive)"
           query user 2>&1 | Out-String | Write-Output
+          # Observational step: query.exe exits 1 in some session contexts
+          # despite printing the table, so its code is incidental here.
+          $LASTEXITCODE = 0
 
       - name: UIA smoke test on Notepad (P0.1)
         shell: pwsh
