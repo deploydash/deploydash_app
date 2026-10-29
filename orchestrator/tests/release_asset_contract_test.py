@@ -164,7 +164,10 @@ class ReleaseAssetContractTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         release = (root / ".github/workflows/release.yml").read_text()
 
-        self.assertIn("needs: [version, build-direct, build-snap, slim-windows]", release)
+        self.assertRegex(
+            release,
+            r"needs:\s*\[\s*version,\s*build-direct,\s*build-snap,\s*slim-windows\s*\]",
+        )
         self.assertIn("needs.slim-windows.result == 'success'", release)
         self.assertIn("client_payload[skip_windows]", release)
 
