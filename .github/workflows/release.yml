@@ -9,13 +9,18 @@ name: Release
 #    they pass.
 # 3. `builds` produces every platform artifact and attaches it to a DRAFT
 #    GitHub release. Nothing is downloadable yet.
-# 4. `handoff` asks the private QA repository (deploydash/deploydash_qa)
-#    to validate the draft.
-# 5. On a `qa-completed` dispatch with a passing conclusion, `validate-qa`
-#    re-validates the callback payload and `store-submit` submits the
+# 4. `slim-windows` runs the private Windows slim suite on a hosted
+#    runner via the in-repo caller (free minutes, public logs). The
+#    suite's code stays in the private repo; only its verdict matters.
+# 5. `handoff` asks the private QA repository (deploydash/deploydash_qa)
+#    to validate the remaining legs (macOS slim; Windows is covered by
+#    step 4 and skipped there). Handoff waits for slim-windows.
+# 6. On a `qa-completed` dispatch with a passing conclusion, `validate-qa`
+#    re-validates the callback payload, re-checks the push run's Windows
+#    slim conclusion, and `store-submit` submits the
 #    draft MSIX packages to the Microsoft Store, commits for
 #    certification, and marks the draft with the submission id.
-# 6. The scheduled Store Publish Watch (store-publish-watch.yml) flips
+# 7. The scheduled Store Publish Watch (store-publish-watch.yml) flips
 #    the marked draft to published once its submission is live — no
 #    runner waits out certification (hours typical, up to three business
 #    days). Binaries become downloadable then, and only then. Releases
@@ -65,6 +70,7 @@ jobs:
     outputs:
       build_name: ${{ steps.resolve.outputs.build_name }}
       build_number: ${{ steps.resolve.outputs.build_number }}
+      base_version: ${{ steps.upgrade_base.outputs.base_version }}
       windows_only: ${{ steps.resolve.outputs.windows_only }}
       macos_only: ${{ steps.resolve.outputs.macos_only }}
       winmac_only: ${{ steps.resolve.outputs.winmac_only }}
@@ -98,6 +104,37 @@ jobs:
           echo "winmac_only=${winmac_only}" >> "${GITHUB_OUTPUT}"
           echo "macos_only=${macos_only}" >> "${GITHUB_OUTPUT}"
           echo "windows_only=${windows_only}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve Windows upgrade-lane base version
+        id: upgrade_base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_NAME: ${{ steps.resolve.outputs.build_name }}
+        run: |
+          # The hosted Windows slim certifies the upgrade lane from the
+          # previous shipped version to this candidate (mirrors the QA
+          # gate's lane resolution). Public release data needs no token
+          # scopes.
+          previous="$(gh release list \
+            --exclude-drafts --exclude-pre-releases --limit 50 \
+            --json tagName --jq '[.[] | .tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort | last // empty')"
+          if [[ -z "${previous}" ]]; then
+            echo "base_version=0.0.1" >> "${GITHUB_OUTPUT}"
+            echo "No previous release; using 0.0.1 as the upgrade base."
+            exit 0
+          fi
+          base="${previous#v}"
+          python3 - "${base}" "${BUILD_NAME}" <<'EOF'
+          import sys
+          base, candidate = sys.argv[1], sys.argv[2]
+          key = lambda v: tuple(int(p) for p in v.split("."))
+          if key(candidate) <= key(base):
+              print(f"candidate {candidate} does not exceed base {base}.", file=sys.stderr)
+              sys.exit(1)
+          EOF
+          echo "base_version=${base}" >> "${GITHUB_OUTPUT}"
+          echo "Upgrade lane: ${base} -> ${BUILD_NAME}."
 
   tests:
     name: Release test gate
@@ -134,6 +171,20 @@ jobs:
           flutter analyze
           flutter test
 
+  slim-windows:
+    name: Windows slim QA (hosted)
+    if: needs.version.outputs.macos_only != 'true'
+    needs: [version, tests]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/qa-public-windows-slim.yml
+    with:
+      app-ref: ${{ github.ref_name }}
+      qa-ref: main
+      base-version: ${{ needs.version.outputs.base_version }}
+      candidate-version: ${{ needs.version.outputs.build_name }}
+    secrets: inherit
+
   build-direct:
     name: Direct builds (.deb, DMG, Store candidate)
     needs: [version, tests]
@@ -166,8 +217,8 @@ jobs:
 
   handoff:
     name: Request private QA validation
-    if: ${{ always() && needs.version.result == 'success' && needs.build-direct.result == 'success' && (needs.build-snap.result == 'success' || needs.build-snap.result == 'skipped') }}
-    needs: [version, build-direct, build-snap]
+    if: ${{ always() && needs.version.result == 'success' && needs.build-direct.result == 'success' && (needs.build-snap.result == 'success' || needs.build-snap.result == 'skipped') && (needs.slim-windows.result == 'success' || needs.slim-windows.result == 'skipped') }}
+    needs: [version, build-direct, build-snap, slim-windows]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -191,7 +242,8 @@ jobs:
             -f client_payload[tag]="${GITHUB_REF_NAME}" \
             -f client_payload[sha]="${GITHUB_SHA}" \
             -f client_payload[build_name]="${{ needs.version.outputs.build_name }}" \
-            -f client_payload[build_number]="${{ needs.version.outputs.build_number }}"
+            -f client_payload[build_number]="${{ needs.version.outputs.build_number }}" \
+            -f client_payload[skip_windows]="${{ needs.slim-windows.result == 'success' }}"
 
   validate-qa:
     name: Validate QA callback payload
@@ -235,6 +287,29 @@ jobs:
           echo "QA passed for ${QA_TAG} at ${QA_SHA}; submitting to stores."
           echo "tag=${QA_TAG}" >> "${GITHUB_OUTPUT}"
           echo "sha=${QA_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Require hosted Windows slim success for this SHA
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QA_TAG: ${{ steps.validate.outputs.tag }}
+          QA_SHA: ${{ steps.validate.outputs.sha }}
+        run: |
+          # The Windows leg runs in the tag-push run (slim-windows), not in
+          # QA; handoff already waits for it, so this only bites on forged
+          # or out-of-band callbacks. Skipped is accepted: slim-windows
+          # skips only for macos_only tags, which have no Windows line.
+          run_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${QA_SHA}" --jq '[.workflow_runs[].id] | max // empty')"
+          if [[ -z "${run_id}" ]]; then
+            echo "No release run found for ${QA_SHA}; refusing to publish." >&2
+            exit 1
+          fi
+          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" --jq '[.jobs[] | select(.name == "Windows slim QA (hosted)") | .conclusion] | first // empty')"
+          if [[ "${conclusion}" != "success" && "${conclusion}" != "skipped" ]]; then
+            echo "Windows slim is '${conclusion}' for ${QA_TAG}; refusing to publish." >&2
+            exit 1
+          fi
+          echo "Windows slim '${conclusion}' for ${QA_TAG}; continuing."
 
   store-submit:
     name: Submit MSIX packages to the Store

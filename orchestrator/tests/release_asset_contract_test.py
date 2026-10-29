@@ -148,6 +148,38 @@ class ReleaseAssetContractTest(unittest.TestCase):
         self.assertIn("repos/${REPO}/releases/${release_id}", script)
         self.assertIn("-F draft=false", script)
 
+    def test_release_runs_hosted_windows_slim_before_qa_handoff(self):
+        """The private Windows suite runs on hosted runners in the push run."""
+        root = Path(__file__).resolve().parents[2]
+        release = (root / ".github/workflows/release.yml").read_text()
+
+        self.assertIn("slim-windows:", release)
+        self.assertIn("uses: ./.github/workflows/qa-public-windows-slim.yml", release)
+        self.assertIn("app-ref: ${{ github.ref_name }}", release)
+        self.assertIn("base-version: ${{ needs.version.outputs.base_version }}", release)
+        self.assertIn("candidate-version: ${{ needs.version.outputs.build_name }}", release)
+
+    def test_qa_handoff_waits_for_slim_and_skips_qa_windows_leg(self):
+        """Handoff fires only after slim passes and tells QA Windows is covered."""
+        root = Path(__file__).resolve().parents[2]
+        release = (root / ".github/workflows/release.yml").read_text()
+
+        self.assertRegex(
+            release,
+            r"needs:\s*\[\s*version,\s*build-direct,\s*build-snap,\s*slim-windows\s*\]",
+        )
+        self.assertIn("needs.slim-windows.result == 'success'", release)
+        self.assertIn("client_payload[skip_windows]", release)
+
+    def test_publish_refuses_without_hosted_slim_success(self):
+        """validate-qa re-checks the push run's slim conclusion (D7)."""
+        root = Path(__file__).resolve().parents[2]
+        release = (root / ".github/workflows/release.yml").read_text()
+
+        self.assertIn("Require hosted Windows slim success for this SHA", release)
+        self.assertIn('select(.name == "Windows slim QA (hosted)")', release)
+        self.assertIn("refusing to publish", release)
+
 
 if __name__ == "__main__":
     unittest.main()
