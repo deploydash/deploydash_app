@@ -458,7 +458,15 @@ Platform-aware release validation runs in `.github/workflows/`:
 
 - `ci.yml`: PR/main gates (analyze, unit tests, scaffold + secret audits).
 - `release.yml`: tag pipeline — test gate, platform builds to a draft
-  release, private QA handoff, publish on QA success.
+  release, hosted Windows slim, private QA handoff for the remaining
+  legs, publish on QA success.
+- `qa-public-windows-slim.yml` (reusable, called by `release.yml`):
+  checks out the private QA suite via a read-only deploy key and runs
+  the Windows slim gate on a hosted runner (free minutes). Logs and
+  artifacts are public by design; the suite's code never leaves the
+  private repo. Treat workflow write access as the security boundary:
+  any writer can exfiltrate secrets via workflow edits, so keep the
+  writer circle minimal and pin third-party actions by SHA.
 - `desktop-release-scaffolds.yml`, `desktop-dart.yml`,
   `desktop-database-coverage.yml`, `backend-engine.yml`: scoped gates.
 - `desktop-direct-builds.yml` (reusable, called by `release.yml`):
