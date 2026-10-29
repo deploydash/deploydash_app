@@ -1,0 +1,162 @@
+# Diagnostic probe for the public-CI/private-QA split (Phase 0 spike artifact,
+# kept as a permanent dispatch-only diagnostic).
+# Proves (or kills) hosted windows-latest as a slim-QA host:
+#   P0.1 interactive desktop + UIA smoke
+#   P0.2 unsigned MSIX sideload from the v1.0.2 release asset
+#   P0.3 DigitalOcean droplet create/destroy round-trip
+#   P0.4 wall-clock / queue timing (collected from the run metadata)
+name: Probe public Windows slim feasibility
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      DO_QA_PAT: ${{ secrets.DO_QA_PAT }}
+    steps:
+      - name: Mask consumed secrets
+        shell: pwsh
+        run: |
+          echo "::add-mask::${{ secrets.DO_QA_PAT }}"
+
+      - name: Session and desktop check (P0.1)
+        shell: pwsh
+        run: |
+          whoami
+          "SessionId=$((Get-Process -Id $PID).SessionId)"
+          "UserInteractive=$([Environment]::UserInteractive)"
+          query user 2>&1 | Out-String | Write-Output
+
+      - name: UIA smoke test on Notepad (P0.1)
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName UIAutomationClient
+          $p = Start-Process notepad -PassThru
+          try {
+            $el = $null
+            for ($i = 0; $i -lt 30 -and -not $el; $i++) {
+              Start-Sleep -Seconds 1
+              $cond = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $p.Id)
+              $el = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst('Children', $cond)
+            }
+            if (-not $el) { throw 'UIA could not find the Notepad window' }
+            "UIA found window: $($el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty))"
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Developer Mode check (P0.2)
+        shell: pwsh
+        run: |
+          $v = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' `
+            -Name AllowDevelopmentWithoutDevLicense).AllowDevelopmentWithoutDevLicense
+          "AllowDevelopmentWithoutDevLicense=$v"
+          if ($v -ne 1) { throw 'Developer Mode is off; sideload would fail' }
+
+      - name: Sideload unsigned MSIX from v1.0.2 (P0.2)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v1.0.2 -R deploydash/deploydash_app -p '*.msixupload' -D msix-test
+          $up = Get-ChildItem msix-test/*.msixupload | Select-Object -First 1
+          Copy-Item $up.FullName msix-test/pkg.zip
+          Expand-Archive msix-test/pkg.zip -DestinationPath msix-test/pkg
+          $bundle = Get-ChildItem msix-test/pkg -Recurse -Include *.msixbundle, *.msix |
+            Select-Object -First 1
+          if (-not $bundle) { throw 'no bundle inside the msixupload' }
+          "bundle=$($bundle.Name)"
+          # Best-effort identity read for a precise install check.
+          $pkgName = ''
+          try {
+            Copy-Item $bundle.FullName "$env:RUNNER_TEMP/b.zip"
+            Expand-Archive "$env:RUNNER_TEMP/b.zip" -DestinationPath "$env:RUNNER_TEMP/b"
+            $inner = Get-ChildItem "$env:RUNNER_TEMP/b" -Recurse -Include *.msix |
+              Select-Object -First 1
+            $manifestRoot = "$env:RUNNER_TEMP/b"
+            if ($inner) {
+              Copy-Item $inner.FullName "$env:RUNNER_TEMP/i.zip"
+              Expand-Archive "$env:RUNNER_TEMP/i.zip" -DestinationPath "$env:RUNNER_TEMP/i"
+              $manifestRoot = "$env:RUNNER_TEMP/i"
+            }
+            $manifest = Get-ChildItem $manifestRoot -Recurse -Filter AppxManifest.xml |
+              Select-Object -First 1
+            if ($manifest) {
+              [xml]$xml = Get-Content $manifest.FullName
+              $pkgName = $xml.Package.Identity.Name
+              "package identity=$pkgName"
+            }
+          } catch { "identity read failed (non-fatal): $_" }
+          Add-AppxPackage -Path $bundle.FullName
+          if ($pkgName) {
+            $found = Get-AppxPackage -Name $pkgName -ErrorAction SilentlyContinue
+            if (-not $found) { throw "installed package $pkgName not found" }
+            "installed: $($found.Name) $($found.Version)"
+            "probe_pkg=$pkgName" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          } else {
+            'Add-AppxPackage succeeded (identity unknown, accepted for the spike)'
+          }
+
+      - name: Remove sideloaded package (P0.2 cleanup)
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:probe_pkg) {
+            Remove-AppxPackage -Package (Get-AppxPackage -Name $env:probe_pkg).PackageFullName `
+              -ErrorAction SilentlyContinue
+          }
+          Get-AppxPackage | Where-Object { $_.Name -like '*Deploy*' } |
+            Remove-AppxPackage -ErrorAction SilentlyContinue
+          'package cleanup done'
+
+      - name: Droplet create/destroy round-trip (P0.3)
+        shell: pwsh
+        run: |
+          $h = @{ Authorization = "Bearer $env:DO_QA_PAT"; 'Content-Type' = 'application/json' }
+          $name = "probe-$env:GITHUB_RUN_ID"
+          ssh-keygen -t ed25519 -N '' -f "$env:RUNNER_TEMP/probe-key" -q
+          $pub = Get-Content "$env:RUNNER_TEMP/probe-key.pub"
+          $key = Invoke-RestMethod -Uri 'https://api.digitalocean.com/v2/account/keys' `
+            -Headers $h -Method Post -Body (@{ name = $name; public_key = $pub } | ConvertTo-Json)
+          "probe_key_id=$($key.ssh_key.id)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          $body = @{
+            name = $name; region = 'lon1'; size = 's-1vcpu-1gb'
+            image = 'ubuntu-24-04-x64'; ssh_keys = @($key.ssh_key.id)
+          } | ConvertTo-Json
+          $d = Invoke-RestMethod -Uri 'https://api.digitalocean.com/v2/droplets' `
+            -Headers $h -Method Post -Body $body
+          "probe_droplet_id=$($d.droplet.id)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "created droplet $($d.droplet.id)"
+          $s = 'unknown'
+          for ($i = 0; $i -lt 18; $i++) {
+            Start-Sleep -Seconds 10
+            $s = (Invoke-RestMethod `
+              -Uri "https://api.digitalocean.com/v2/droplets/$($d.droplet.id)" `
+              -Headers $h).droplet.status
+            if ($s -eq 'active') { break }
+          }
+          "droplet status=$s"
+          if ($s -ne 'active') { throw 'droplet never became active' }
+
+      - name: Destroy droplet and key (P0.3 cleanup)
+        if: always()
+        shell: pwsh
+        run: |
+          $h = @{ Authorization = "Bearer $env:DO_QA_PAT" }
+          if ($env:probe_droplet_id) {
+            Invoke-RestMethod -Uri "https://api.digitalocean.com/v2/droplets/$env:probe_droplet_id" `
+              -Headers $h -Method Delete -ErrorAction SilentlyContinue
+            'droplet destroy requested'
+          }
+          if ($env:probe_key_id) {
+            Invoke-RestMethod -Uri "https://api.digitalocean.com/v2/account/keys/$env:probe_key_id" `
+              -Headers $h -Method Delete -ErrorAction SilentlyContinue
+            'key deleted'
+          }
