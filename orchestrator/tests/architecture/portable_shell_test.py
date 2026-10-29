@@ -70,6 +70,8 @@ _EXPECTED_NON_LINUX_WORKFLOWS = frozenset(
         "desktop-release-scaffolds.yml",
         # Dispatch-only hosted-Windows slim-QA probe (permanent diagnostic).
         "probe-public-windows-slim.yml",
+        # Public caller for the private Windows slim suite.
+        "qa-public-windows-slim.yml",
     }
 )
 

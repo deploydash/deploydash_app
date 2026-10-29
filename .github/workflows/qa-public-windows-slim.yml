@@ -1,0 +1,225 @@
+# Public caller for the private Windows slim suite (public-CI/private-QA).
+# Runs the QA repo's desk gate on hosted windows-latest: free minutes,
+# public logs (accepted per D8), suite code never leaves the private repo.
+# Mirrors desk-windows-slim.yml with the checkouts swapped (QA at root,
+# app nested) and a python3 shim the self-hosted VM does not need.
+name: Windows slim QA (hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      app-ref:
+        description: "deploydash_app ref (branch, tag, or SHA) to certify"
+        required: false
+        default: "main"
+      qa-ref:
+        description: "deploydash_qa ref (branch, tag, or SHA) carrying the suite"
+        required: false
+        default: "main"
+      base-version:
+        description: "Base MSIX version (X.Y.Z)"
+        required: false
+        default: "1.0.0"
+      candidate-version:
+        description: "Candidate MSIX version (X.Y.Z, must exceed base)"
+        required: false
+        default: "1.0.1"
+  workflow_call:
+    inputs:
+      app-ref:
+        required: false
+        type: string
+        default: "main"
+      qa-ref:
+        required: false
+        type: string
+        default: "main"
+      base-version:
+        required: false
+        type: string
+        default: "1.0.0"
+      candidate-version:
+        required: false
+        type: string
+        default: "1.0.1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desk-windows-slim
+  cancel-in-progress: false
+
+jobs:
+  slim:
+    name: Windows slim artifact gate (hosted)
+    runs-on: windows-latest
+    timeout-minutes: 360
+    env:
+      E2E_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Mask consumed secrets
+        shell: pwsh
+        run: |
+          echo "::add-mask::${{ secrets.DO_QA_PAT }}"
+          echo "::add-mask::${{ secrets.QA_SUITE_DEPLOY_KEY }}"
+
+      - name: Check out private QA suite
+        uses: actions/checkout@v5
+        with:
+          repository: deploydash/deploydash_qa
+          ref: ${{ inputs.qa-ref }}
+          ssh-key: ${{ secrets.QA_SUITE_DEPLOY_KEY }}
+
+      - name: Check out application source under test
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.app-ref }}
+          path: deploydash_app
+
+      - name: Resolve exact commits
+        id: refs
+        shell: bash
+        run: |
+          app_sha="$(git -C deploydash_app rev-parse HEAD)"
+          qa_sha="$(git rev-parse HEAD)"
+          echo "app_sha=${app_sha}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Windows slim E2E (hosted)"
+            echo ""
+            echo "- app ref: \`${{ inputs.app-ref }}\` (\`${app_sha}\`)"
+            echo "- suite ref: \`${{ inputs.qa-ref }}\` (\`${qa_sha}\`)"
+            echo "- E2E pair: \`${{ inputs.base-version }}\` -> \`${{ inputs.candidate-version }}\`"
+            echo "- run id: \`${E2E_RUN_ID}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Install pinned winapp CLI via winget
+        shell: pwsh
+        run: |
+          if ((Get-Command winapp -ErrorAction SilentlyContinue) -and
+              ((winapp --version) -match '0\.5\.0')) {
+            Write-Output "winapp 0.5.0 already present; skipping winget."
+            exit 0
+          }
+          winget install `
+            --id Microsoft.WinAppCli `
+            --exact `
+            --version 0.5.0 `
+            --source winget `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --disable-interactivity
+          winapp --version
+
+      - name: Set up Flutter (repo-pinned 3.47.8)
+        uses: ./deploydash_app/.github/actions/setup-flutter
+
+      - name: Install uv and Python 3.13.14
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python 3.13.14 on PATH
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.14"
+
+      - name: Provide python3 for the gate shim
+        shell: pwsh
+        run: |
+          # Hosted setup-python ships python.exe only; the gate shim
+          # execs python3 (the self-hosted VM has it preinstalled).
+          $python = (Get-Command python).Source
+          $shim = Join-Path (Split-Path $python -Parent) 'python3.exe'
+          if (-not (Test-Path $shim)) { Copy-Item $python $shim }
+          bash -lc 'python3 --version'
+
+      - name: Provision uv Python 3.13.14 for the E2E build
+        shell: bash
+        run: |
+          uv python install 3.13.14
+          uv python find 3.13.14
+
+      - name: Persist the toolchain for the interactive agent session
+        shell: pwsh
+        run: |
+          # The gate's UI agent runs under a scheduled task with a fresh
+          # logon environment, so it never sees job-scoped GITHUB_PATH.
+          # Same requirement as self-hosted; persist in the user hive.
+          $uvDir = Split-Path (Get-Command uv).Source -Parent
+          $flutterBin = Split-Path (Get-Command flutter).Source -Parent
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          foreach ($dir in @($uvDir, $flutterBin)) {
+            if ($userPath -notlike "*$dir*") { $userPath = "$userPath;$dir" }
+          }
+          [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
+          [Environment]::SetEnvironmentVariable(
+            'UV_PYTHON_INSTALL_DIR', $env:UV_PYTHON_INSTALL_DIR, 'User')
+
+      - name: Generate the disposable droplet password
+        shell: bash
+        run: |
+          password="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+          echo "::add-mask::${password}"
+          echo "E2E_VM_PASSWORD=${password}" >> "${GITHUB_ENV}"
+
+      - name: Self-test the gate configuration
+        shell: bash
+        env:
+          DEPLOYDASH_E2E_APP_SOURCE: ${{ github.workspace }}/deploydash_app
+          DEPLOYDASH_E2E_APP_SOURCE_COMMIT: ${{ steps.refs.outputs.app_sha }}
+          DEPLOYDASH_E2E_DO_PAT: ${{ secrets.DO_QA_PAT }}
+          DEPLOYDASH_E2E_VM_PASSWORD: ${{ env.E2E_VM_PASSWORD }}
+          DESK_WIN_TARGET: local
+          DESK_WIN_VM: hosted
+          DESK_WIN_BASE_VERSION: ${{ inputs.base-version }}
+          DESK_WIN_CANDIDATE_VERSION: ${{ inputs.candidate-version }}
+        run: bash qa/e2e/runners/run_desk_windows_slim.sh --self-test
+
+      - name: Run Windows slim artifact gate
+        shell: bash
+        env:
+          DEPLOYDASH_E2E_APP_SOURCE: ${{ github.workspace }}/deploydash_app
+          DEPLOYDASH_E2E_APP_SOURCE_COMMIT: ${{ steps.refs.outputs.app_sha }}
+          DEPLOYDASH_E2E_DO_PAT: ${{ secrets.DO_QA_PAT }}
+          DEPLOYDASH_E2E_VM_PASSWORD: ${{ env.E2E_VM_PASSWORD }}
+          DEPLOYDASH_E2E_RUN_ID: ${{ env.E2E_RUN_ID }}
+          DESK_WIN_TARGET: local
+          DESK_WIN_VM: hosted
+          DESK_WIN_BASE_VERSION: ${{ inputs.base-version }}
+          DESK_WIN_CANDIDATE_VERSION: ${{ inputs.candidate-version }}
+        run: bash qa/e2e/runners/run_desk_windows_slim.sh
+
+      - name: Ferry interactive-agent tree into the evidence dir
+        if: always()
+        shell: pwsh
+        run: |
+          # The harness ferries individual logs, but when the agent dies
+          # early (or a ferry path drifts) the run goes dark. Copy the
+          # whole agent tree so the next failure is diagnosable. Secrets
+          # stay on the runner: payload files under secrets/ are excluded.
+          $runDir = "qa/e2e/local/runs/desk-windows-artifact/${{ env.E2E_RUN_ID }}"
+          $dest = Join-Path $runDir "evidence/agent-ferry"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $agentRoot = "C:\DeployDashE2E\agent"
+          if (Test-Path $agentRoot -PathType Container) {
+            Get-ChildItem $agentRoot -Force |
+              Where-Object { $_.Name -ne "secrets" } |
+              Copy-Item -Destination $dest -Recurse -Force -ErrorVariable ferryErrors -ErrorAction SilentlyContinue
+            foreach ($copyError in $ferryErrors) {
+              "FERRY-COPY-ERROR: $($copyError.TargetObject) : $($copyError.Exception.Message)"
+            }
+            Get-ChildItem $agentRoot -File -Force |
+              ForEach-Object { $_.Name } |
+              Out-File (Join-Path $dest "ferry-inventory.txt") -Encoding utf8
+          } else {
+            "agent root missing: $agentRoot" |
+              Out-File (Join-Path $dest "ferry-inventory.txt") -Encoding utf8
+          }
+
+      - name: Upload gate report and evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-slim-${{ env.E2E_RUN_ID }}
+          path: qa/e2e/local/runs/desk-windows-artifact/${{ env.E2E_RUN_ID }}/
+          if-no-files-found: warn
+          retention-days: 30
