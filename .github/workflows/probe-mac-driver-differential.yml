@@ -1,0 +1,248 @@
+# Driver differential: Swift AX tools vs osascript shims on hosted macos-15 (P1.2).
+# Dispatch-only permanent diagnostic. Everything runs over self-SSH (the gate's
+# context). Pass contract:
+#   - reads (full + substring dumps) MUST be byte-identical, Swift vs shim;
+#   - axpress NOT-FOUND MUST agree (rc 1 + same message);
+#   - shim axpress MUST land (PRESS OK + window closes); Swift's verdict is
+#     recorded (PRESS FAIL expected: ad-hoc writes lack caller trust — if
+#     Swift ever presses OK the port is unnecessary and this FAILS LOUD);
+#   - shim axclick MUST land (frontmost flips); both report CLICKAT-OK;
+#   - keystroke-over-SSH MUST exit 0.
+# Timings for every dump land in the step summary (retune evidence).
+name: Mac driver differential (hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      qa-ref:
+        description: deploydash_qa ref carrying the osascript shims
+        required: false
+        default: ci/mac-osascript-driver
+
+permissions:
+  contents: read
+
+jobs:
+  differential:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Mask consumed secrets
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.QA_SUITE_DEPLOY_KEY }}"
+
+      - name: Check out Swift originals (QA main)
+        uses: actions/checkout@v5
+        with:
+          repository: deploydash/deploydash_qa
+          ref: main
+          ssh-key: ${{ secrets.QA_SUITE_DEPLOY_KEY }}
+          path: qa-swift
+
+      - name: Check out osascript shims
+        uses: actions/checkout@v5
+        with:
+          repository: deploydash/deploydash_qa
+          ref: ${{ inputs.qa-ref }}
+          ssh-key: ${{ secrets.QA_SUITE_DEPLOY_KEY }}
+          path: qa-shims
+
+      - name: Build Swift tools
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/swift-bin"
+          for tool in axdump axpress axclick; do
+            swiftc -o "${RUNNER_TEMP}/swift-bin/${tool}" \
+              "qa-swift/qa/e2e/harnesses/desktop_macos/tools/${tool}.swift"
+          done
+          ls "${RUNNER_TEMP}/swift-bin"
+
+      - name: Install osascript shims (exercises build.sh)
+        shell: bash
+        run: |
+          bash qa-shims/qa/e2e/harnesses/desktop_macos/build.sh
+          ls qa-shims/qa/e2e/harnesses/desktop_macos/bin
+
+      - name: Enable self-SSH
+        shell: bash
+        run: |
+          sudo systemsetup -setremotelogin on
+          mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
+          ssh-keygen -t ed25519 -N '' -f "${HOME}/.ssh/diff-loopback" -q
+          cat "${HOME}/.ssh/diff-loopback.pub" >> "${HOME}/.ssh/authorized_keys"
+          chmod 600 "${HOME}/.ssh/authorized_keys"
+          for i in $(seq 1 6); do
+            if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                -i "${HOME}/.ssh/diff-loopback" localhost 'echo SSH-OK' 2>/dev/null; then
+              echo "self-SSH up after ${i} tries"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "self-SSH never came up." >&2
+          exit 1
+
+      - name: Property-name diagnosis
+        shell: bash
+        run: |
+          osascript -e 'tell application "Finder" to make new Finder window'
+          sleep 2
+          echo "--- description (shim first branch):"
+          osascript -e 'tell application "System Events" to tell process "Finder" to return description of every UI element of window 1' 2>&1 | head -c 400
+          echo ""
+          echo "--- accessibility description (fallback branch):"
+          osascript -e 'tell application "System Events" to tell process "Finder" to return accessibility description of every UI element of window 1' 2>&1 | head -c 400
+          echo ""
+          echo "--- tuple pull (the batched primitive):"
+          osascript -e 'tell application "System Events" to tell process "Finder" to return {role, title, value, position, size} of every UI element of window 1' 2>&1 | head -c 600
+          echo ""
+
+      - name: Run differential over self-SSH
+        shell: bash
+        run: |
+          # The gate drives the Mac over SSH, so the differential runs
+          # there too. Same machine/user, so absolute tool paths carry
+          # over; only the bootstrap context differs. (echo-built: a
+          # flush heredoc terminator breaks YAML, an indented one
+          # silently swallows the rest of the step.)
+          {
+            echo 'set -u'
+            echo 'OUT="/tmp/driver-diff"'
+            echo 'mkdir -p "$OUT"'
+            echo 'rm -f "$OUT"/*'
+            echo 'FAIL=0'
+            echo 'cmp_files() {'
+            echo '  if cmp -s "$1" "$2"; then'
+            echo '    echo "DIFF-OK: $3 identical"'
+            echo '  else'
+            echo '    echo "DIFF-FAIL: $3 differs"'
+            echo '    FAIL=1'
+            echo '  fi'
+            echo '}'
+            echo 'timed_dump() {'
+            echo '  start=$(date +%s)'
+            echo '  if [ -n "$2" ]; then'
+            echo '    "$1" Finder "$2" > "$3" 2> "$3.err"; rc=$?'
+            echo '  else'
+            echo '    "$1" Finder > "$3" 2> "$3.err"; rc=$?'
+            echo '  fi'
+            echo '  end=$(date +%s)'
+            echo '  echo "$4 $((end - start))s rc=$rc"'
+            echo '}'
+            echo 'wincount() {'
+            echo '  osascript -e "tell application \"System Events\" to tell process \"Finder\" to return count of windows"'
+            echo '}'
+            echo 'frontmost() {'
+            echo '  osascript -e "tell application \"System Events\" to return frontmost of process \"$1\""'
+            echo '}'
+            echo 'osascript -e "tell application \"Finder\" to close every window" 2>/dev/null || true'
+            echo 'sleep 1'
+            echo 'osascript -e "tell application \"Finder\" to make new Finder window"'
+            echo 'sleep 2'
+            echo 'echo "windows: $(wincount)"'
+            echo 'r=1'
+            echo 'while [ $r -le 3 ]; do'
+            echo '  timed_dump "$SWIFT_BIN/axdump" "" "$OUT/swift-full-$r.txt" "swift-full-$r"'
+            echo '  timed_dump "$SHIM_BIN/axdump" "" "$OUT/shim-full-$r.txt" "shim-full-$r"'
+            echo '  r=$((r + 1))'
+            echo 'done'
+            echo 'cmp_files "$OUT/swift-full-1.txt" "$OUT/swift-full-2.txt" "swift-rounds"'
+            echo 'cmp_files "$OUT/swift-full-2.txt" "$OUT/swift-full-3.txt" "swift-rounds"'
+            echo 'cmp_files "$OUT/shim-full-1.txt" "$OUT/shim-full-2.txt" "shim-rounds"'
+            echo 'cmp_files "$OUT/shim-full-2.txt" "$OUT/shim-full-3.txt" "shim-rounds"'
+            echo 'cmp_files "$OUT/swift-full-1.txt" "$OUT/shim-full-1.txt" "swift-vs-shim-full"'
+            echo 'wc -l "$OUT/swift-full-1.txt" "$OUT/shim-full-1.txt"'
+            echo 'label=$(grep -o "\\[[^]]*\\]" "$OUT/swift-full-1.txt" | grep -v "\\[\\]" | head -n 1 | tr -d "[]")'
+            echo 'if [ -z "$label" ]; then label="e"; fi'
+            echo 'echo "substring probe: [$label]"'
+            echo 'timed_dump "$SWIFT_BIN/axdump" "$label" "$OUT/swift-sub.txt" "swift-sub-1"'
+            echo 'timed_dump "$SHIM_BIN/axdump" "$label" "$OUT/shim-sub.txt" "shim-sub-1"'
+            echo 'cmp_files "$OUT/swift-sub.txt" "$OUT/shim-sub.txt" "swift-vs-shim-substring"'
+            echo '"$SWIFT_BIN/axpress" Finder "zzz-no-such-button-zzz" > "$OUT/swift-nf.txt" 2>&1; swift_rc=$?'
+            echo '"$SHIM_BIN/axpress" Finder "zzz-no-such-button-zzz" > "$OUT/shim-nf.txt" 2>&1; shim_rc=$?'
+            echo 'echo "notfound swift rc=$swift_rc shim rc=$shim_rc"'
+            echo 'if [ "$swift_rc" = "$shim_rc" ]; then echo "DIFF-OK: notfound rc agree"; else echo "DIFF-FAIL: notfound rc differ"; FAIL=1; fi'
+            echo 'cmp_files "$OUT/swift-nf.txt" "$OUT/shim-nf.txt" "notfound-stdout"'
+            echo 'close_label=$(grep -i "button" "$OUT/shim-full-1.txt" | grep -i "close" | head -n 1 | grep -o "\\[[^]]*\\]" | tr -d "[]")'
+            echo 'if [ -z "$close_label" ]; then'
+            echo '  echo "DIFF-SKIP: no close-labeled button; positive press unproven"'
+            echo 'else'
+            echo '  echo "close probe: [$close_label]"'
+            echo '  before=$(wincount)'
+            echo '  "$SHIM_BIN/axpress" Finder "$close_label" > "$OUT/shim-press.txt" 2>&1; shim_rc=$?'
+            echo '  sleep 2'
+            echo '  after_shim=$(wincount)'
+            echo '  echo "shim press rc=$shim_rc windows $before -> $after_shim : $(cat "$OUT/shim-press.txt")"'
+            echo '  osascript -e "tell application \"Finder\" to make new Finder window"'
+            echo '  sleep 2'
+            echo '  mid=$(wincount)'
+            echo '  "$SWIFT_BIN/axpress" Finder "$close_label" > "$OUT/swift-press.txt" 2>&1; swift_rc=$?'
+            echo '  sleep 2'
+            echo '  after_swift=$(wincount)'
+            echo '  echo "swift press rc=$swift_rc windows $mid -> $after_swift : $(cat "$OUT/swift-press.txt")"'
+            echo '  if [ "$shim_rc" = "0" ] && [ "$after_shim" -lt "$before" ]; then'
+            echo '    echo "DIFF-OK: shim press landed"'
+            echo '  else'
+            echo '    echo "DIFF-FAIL: shim press did not land"; FAIL=1'
+            echo '  fi'
+            echo '  if [ "$swift_rc" = "0" ] && [ "$after_swift" -lt "$mid" ]; then'
+            echo '    echo "DIFF-FAIL: UNEXPECTED raw AXPress landed on hosted; port may be unnecessary"; FAIL=1'
+            echo '  else'
+            echo '    echo "DIFF-OK: raw AXPress denied as expected (port stands)"'
+            echo '  fi'
+            echo 'fi'
+            echo 'open -a TextEdit 2>/dev/null || true'
+            echo 'sleep 1'
+            echo 'osascript -e "tell application \"System Events\" to set frontmost of process \"TextEdit\" to true" 2>/dev/null || true'
+            echo 'sleep 1'
+            echo 'pos=$(osascript -e "tell application \"System Events\" to tell process \"Finder\" to return position of window 1")'
+            echo 'size=$(osascript -e "tell application \"System Events\" to tell process \"Finder\" to return size of window 1")'
+            echo 'px=$(echo "$pos" | cut -d, -f1); py=$(echo "$pos" | cut -d, -f2)'
+            echo 'sw=$(echo "$size" | cut -d, -f1); sh=$(echo "$size" | cut -d, -f2)'
+            echo 'cx=$((px + sw / 2)); cy=$((py + sh / 2))'
+            echo 'echo "click target: $cx,$cy"'
+            echo 'screencapture -x "$OUT/pre-click.png" || true'
+            echo '"$SHIM_BIN/axclick" "$cx" "$cy" > "$OUT/shim-click.txt" 2>&1; shim_rc=$?'
+            echo 'sleep 1'
+            echo 'if [ "$shim_rc" = "0" ] && [ "$(frontmost Finder)" = "true" ] && grep -q "CLICKAT-OK" "$OUT/shim-click.txt"; then'
+            echo '  echo "DIFF-OK: shim click landed"'
+            echo 'else'
+            echo '  echo "DIFF-FAIL: shim click did not land"; FAIL=1'
+            echo 'fi'
+            echo '"$SWIFT_BIN/axclick" "$cx" "$cy" > "$OUT/swift-click.txt" 2>&1; swift_rc=$?'
+            echo 'echo "swift click rc=$swift_rc : $(cat "$OUT/swift-click.txt") (recorded only)"'
+            echo 'if osascript -e "tell application \"System Events\" to key code 53" 2> "$OUT/keystroke.err"; then'
+            echo '  echo "DIFF-OK: keystroke over SSH rc=0"'
+            echo 'else'
+            echo '  echo "DIFF-FAIL: keystroke over SSH failed"; FAIL=1'
+            echo 'fi'
+            echo 'echo "DIFF-RESULT fail=$FAIL"'
+            echo 'exit $FAIL'
+          } > /tmp/driver-diff.sh
+          bash -n /tmp/driver-diff.sh && echo "diff script syntax OK"
+          ssh -o BatchMode=yes -i "${HOME}/.ssh/diff-loopback" localhost \
+            "SWIFT_BIN=${RUNNER_TEMP}/swift-bin SHIM_BIN=${GITHUB_WORKSPACE}/qa-shims/qa/e2e/harnesses/desktop_macos/bin bash /tmp/driver-diff.sh" \
+            | tee "${RUNNER_TEMP}/diff-log.txt"
+
+      - name: Record timings
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Driver differential timings (seconds per dump)"
+            echo ""
+            grep -E "^(swift|shim)-(full|sub)-[0-9]+ [0-9]+s" "${RUNNER_TEMP}/diff-log.txt" \
+              || echo "(no timing lines; see log)"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload differential evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-driver-differential-${{ github.run_id }}
+          path: |
+            /tmp/driver-diff/
+            ${{ runner.temp }}/diff-log.txt
+          if-no-files-found: warn
+          retention-days: 14
