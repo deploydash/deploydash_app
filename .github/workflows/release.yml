@@ -322,7 +322,7 @@ jobs:
             echo "No release run found for ${QA_SHA}; refusing to publish." >&2
             exit 1
           fi
-          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" --jq '[.jobs[] | select(.name == "Windows slim QA (hosted)") | .conclusion] | first // empty')"
+          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" --jq '[.jobs[] | select(.name | startswith("Windows slim QA (hosted)")) | .conclusion] | first // empty')"
           if [[ "${conclusion}" != "success" && "${conclusion}" != "skipped" ]]; then
             echo "Windows slim is '${conclusion}' for ${QA_TAG}; refusing to publish." >&2
             exit 1
@@ -345,7 +345,7 @@ jobs:
             echo "No release run found for ${QA_SHA}; refusing to publish." >&2
             exit 1
           fi
-          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" --jq '[.jobs[] | select(.name == "macOS slim QA (hosted)") | .conclusion] | first // empty')"
+          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" --jq '[.jobs[] | select(.name | startswith("macOS slim QA (hosted)")) | .conclusion] | first // empty')"
           if [[ "${conclusion}" != "success" && "${conclusion}" != "skipped" ]]; then
             echo "macOS slim is '${conclusion}' for ${QA_TAG}; refusing to publish." >&2
             exit 1
