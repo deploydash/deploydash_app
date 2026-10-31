@@ -64,20 +64,46 @@ jobs:
           pgrep -fl "WindowServer|loginwindow" | head -4 || true
           echo "CGSession: $(/System/Library/CoreServices/RemoteManagement/AppleVNCServer.bundle/Contents/Support/cgssession 2>/dev/null || echo n/a)"
           screencapture -x "${RUNNER_TEMP}/ax-probe.png" && ls -la "${RUNNER_TEMP}/ax-probe.png"
+          # Query ladder: entire-contents is widely reported flaky
+          # (returns empty instead of erroring), so prove each rung.
+          osascript -e 'tell application "System Events" to tell process "Finder"
+            return {count of windows, name of window 1}
+          end tell'
+          direct_kids="$(osascript -e 'tell application "System Events" to tell process "Finder"
+            return (count of UI elements of window 1) as string
+          end tell')"
+          echo "Finder window 1 direct UI elements: ${direct_kids}"
           result="$(osascript -e 'tell application "System Events" to tell process "Finder"
             set elCount to count of entire contents of window 1
             return elCount as string
           end tell')"
-          echo "Finder window 1 AX elements (direct): ${result}"
-          # Second target: TextEdit with a real document.
-          osascript -e 'tell application "TextEdit" to make new document' >/dev/null
-          sleep 2
-          tresult="$(osascript -e 'tell application "System Events" to tell process "TextEdit"
-            return (count of entire contents of window 1) as string
-          end tell' 2>&1)"
-          echo "TextEdit window 1 AX elements (direct): ${tresult}"
-          if [[ ! "${result}" =~ ^[0-9]+$ ]] || [[ "${result}" -lt 5 ]]; then
-            echo "AX tree unreadable directly (got '${result}')." >&2
+          echo "Finder window 1 entire-contents (known-flaky): ${result}"
+          # The port's primitive: recursive UI-elements walk.
+          # (echo-built: a heredoc terminator cannot live inside YAML.)
+          {
+            echo 'on countWalk(el)'
+            echo '  set n to 0'
+            echo '  tell application "System Events"'
+            echo '    repeat with kid in (UI elements of el)'
+            echo '      set n to n + 1 + my countWalk(kid)'
+            echo '    end repeat'
+            echo '  end tell'
+            echo '  return n'
+            echo 'end countWalk'
+            echo 'tell application "System Events" to tell process "Finder"'
+            echo '  return my countWalk(window 1)'
+            echo 'end tell'
+          } > "${RUNNER_TEMP}/walk.scpt"
+          walked="$(osascript "${RUNNER_TEMP}/walk.scpt")"
+          echo "Finder window 1 recursive-walk count: ${walked}"
+          # Input path proof (Escape on Finder is a no-op).
+          osascript -e 'tell application "System Events" to tell process "Finder"
+            set frontmost to true
+            keystroke (ASCII character 27)
+          end tell'
+          echo "frontmost + keystroke OK"
+          if [[ ! "${walked}" =~ ^[0-9]+$ ]] || [[ "${walked}" -lt 5 ]]; then
+            echo "AX tree unreadable directly (walked '${walked}')." >&2
             exit 1
           fi
 
@@ -85,12 +111,15 @@ jobs:
         shell: bash
         run: |
           # The money step: the gate drives the Mac over SSH, so AX must
-          # work from an SSH session, not just the job shell.
-          result="$(ssh -o BatchMode=yes -i "${HOME}/.ssh/probe-loopback" localhost \
-            "osascript -e 'tell application \"System Events\" to tell process \"Finder\" to count of entire contents of window 1'")"
-          echo "Finder window 1 AX elements (over SSH): ${result}"
-          if [[ ! "${result}" =~ ^[0-9]+$ ]] || [[ "${result}" -lt 5 ]]; then
-            echo "AX tree unreadable over SSH (got '${result}')." >&2
+          # work from an SSH session, not just the job shell. Uses the
+          # recursive-walk primitive (entire-contents is flaky).
+          scp -o BatchMode=yes -i "${HOME}/.ssh/probe-loopback" \
+            "${RUNNER_TEMP}/walk.scpt" localhost:/tmp/probe-walk.scpt
+          walked="$(ssh -o BatchMode=yes -i "${HOME}/.ssh/probe-loopback" localhost \
+            "osascript /tmp/probe-walk.scpt")"
+          echo "Finder window 1 recursive-walk count (over SSH): ${walked}"
+          if [[ ! "${walked}" =~ ^[0-9]+$ ]] || [[ "${walked}" -lt 5 ]]; then
+            echo "AX tree unreadable over SSH (walked '${walked}')." >&2
             exit 1
           fi
 
