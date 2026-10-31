@@ -425,7 +425,9 @@ grep -q "ui/build/deb/\\*.deb" "${GIT_ROOT}/.github/workflows/desktop-direct-bui
 grep -q "arch: arm64" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
 grep -q "arch: x64" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
 grep -q "runs-on: \${{ matrix.runner }}" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
-grep -q "dd-mac-dmg" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
+grep -q "runs-on: macos-15" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
+grep -q "AppleWWDRCA" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
+grep -q "STAPLE-RETRY" "${APP_DIR}/scripts/notarize_macos_dmg.sh"
 grep -q "macos_only" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
 grep -q "macos-26-intel" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
 grep -q "DEPLOYDASH_MACOS_ARCH" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
@@ -444,6 +446,17 @@ grep -q "^[[:space:]]*if:[^#]*needs\.ubuntu-deb\.result == 'success' || inputs\.
 grep -q 'has_msix' "${GIT_ROOT}/.github/workflows/release.yml"
 if grep -q 'list-keychains -d user -s "${KEYCHAIN_PATH}"$' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"; then
   echo "macos-dmg must append its keychain to the existing search list, not replace it (replacing hides the login-keychain Developer ID intermediate and breaks codesign)." >&2
+  exit 1
+fi
+macos_selfhosted="$(
+  awk '
+    /^  macos-dmg:/ { in_macos=1; next }
+    /^  [a-zA-Z0-9_-]+:/ { in_macos=0 }
+    in_macos && /self-hosted/ && !/^ *#/ { print; exit }
+  ' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
+)"
+if [[ -n "${macos_selfhosted}" ]]; then
+  echo "macos-dmg must run on hosted macos-15, not a self-hosted runner (the desk Mac is fallback-only; see the job comment)." >&2
   exit 1
 fi
 macos_setup_python="$(
@@ -473,7 +486,7 @@ if [[ -z "${macos_require_version}" ]]; then
   exit 1
 fi
 if grep -qE '^\s+-\s+arch:\s+x64\s*$' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"; then
-  # Active macOS x64 matrix entries are forbidden while the laptop is arm64-only.
+  # Active macOS x64 matrix entries are forbidden while x64 is suspended.
   # A commented restore block naming macos-26-intel is required (see above).
   macos_x64_active="$(
     awk '
@@ -483,7 +496,7 @@ if grep -qE '^\s+-\s+arch:\s+x64\s*$' "${GIT_ROOT}/.github/workflows/desktop-dir
     ' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
   )"
   if [[ -n "${macos_x64_active}" ]]; then
-    echo "macos-dmg must not schedule an active x64 leg on the arm64 laptop runner." >&2
+    echo "macos-dmg must not schedule an active x64 leg while x64 is suspended." >&2
     exit 1
   fi
 fi
