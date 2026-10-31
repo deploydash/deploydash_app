@@ -444,6 +444,9 @@ grep -q "^[[:space:]]*winmac_only: \${{ needs\.version\.outputs\.winmac_only" "$
 grep -q "^[[:space:]]*if:[^#]*winmac_only != 'true'" "${GIT_ROOT}/.github/workflows/release.yml"
 grep -q "^[[:space:]]*if:[^#]*needs\.ubuntu-deb\.result == 'success' || inputs\.winmac_only" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
 grep -q 'has_msix' "${GIT_ROOT}/.github/workflows/release.yml"
+grep -q 'slim-macos' "${GIT_ROOT}/.github/workflows/release.yml"
+grep -q 'skip_macos' "${GIT_ROOT}/.github/workflows/release.yml"
+grep -q 'macOS slim QA (hosted)' "${GIT_ROOT}/.github/workflows/release.yml"
 if grep -q 'list-keychains -d user -s "${KEYCHAIN_PATH}"$' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"; then
   echo "macos-dmg must append its keychain to the existing search list, not replace it (replacing hides the login-keychain Developer ID intermediate and breaks codesign)." >&2
   exit 1
