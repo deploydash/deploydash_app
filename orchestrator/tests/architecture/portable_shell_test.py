@@ -76,6 +76,8 @@ _EXPECTED_NON_LINUX_WORKFLOWS = frozenset(
         "probe-public-macos-ax.yml",
         # Dispatch-only Swift-vs-osascript driver differential (P1.2 proof).
         "probe-mac-driver-differential.yml",
+        # Public macOS slim QA caller (P2.1; suite stays private).
+        "qa-public-macos-slim.yml",
     }
 )
 
