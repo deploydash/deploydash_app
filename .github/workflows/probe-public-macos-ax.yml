@@ -56,11 +56,26 @@ jobs:
           procs="$(osascript -e 'tell application "System Events" to get name of every process')"
           echo "${procs}" | grep -q Finder || { echo "Finder missing from process list." >&2; exit 1; }
           echo "System Events sees $(echo "${procs}" | tr ',' '\n' | wc -l) processes"
+          echo "UI elements enabled: $(osascript -e 'tell application "System Events" to get UI elements enabled')"
+          osascript -e 'tell application "System Events" to tell process "Finder"
+            return {count of windows, name of window 1, role of window 1, position of window 1}
+          end tell'
+          echo "WindowServer/loginwindow:"
+          pgrep -fl "WindowServer|loginwindow" | head -4 || true
+          echo "CGSession: $(/System/Library/CoreServices/RemoteManagement/AppleVNCServer.bundle/Contents/Support/cgssession 2>/dev/null || echo n/a)"
+          screencapture -x "${RUNNER_TEMP}/ax-probe.png" && ls -la "${RUNNER_TEMP}/ax-probe.png"
           result="$(osascript -e 'tell application "System Events" to tell process "Finder"
             set elCount to count of entire contents of window 1
             return elCount as string
           end tell')"
           echo "Finder window 1 AX elements (direct): ${result}"
+          # Second target: TextEdit with a real document.
+          osascript -e 'tell application "TextEdit" to make new document' >/dev/null
+          sleep 2
+          tresult="$(osascript -e 'tell application "System Events" to tell process "TextEdit"
+            return (count of entire contents of window 1) as string
+          end tell' 2>&1)"
+          echo "TextEdit window 1 AX elements (direct): ${tresult}"
           if [[ ! "${result}" =~ ^[0-9]+$ ]] || [[ "${result}" -lt 5 ]]; then
             echo "AX tree unreadable directly (got '${result}')." >&2
             exit 1
@@ -78,6 +93,15 @@ jobs:
             echo "AX tree unreadable over SSH (got '${result}')." >&2
             exit 1
           fi
+
+      - name: Upload session screenshot
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-ax-probe-${{ github.run_id }}
+          path: ${{ runner.temp }}/ax-probe.png
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Swift AX negative control (M0.2)
         shell: bash
