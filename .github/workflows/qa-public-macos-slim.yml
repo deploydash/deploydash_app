@@ -1,0 +1,242 @@
+# Public macOS slim QA on hosted macOS runners.
+#
+# Exact notarized-DMG release gate on stock macos-15: the runner IS the
+# machine under test. Step-for-step mirror of private
+# deploydash_qa/.github/workflows/desk-macos-slim.yml; only the checkout
+# (private suite via deploy key), the runner label, the DMG download
+# token (same-repo GITHUB_TOKEN reads our own public drafts), and the
+# candidate directory differ. No droplet/secret/evidence semantic
+# differs. Public logs and artifacts are accepted (spec D8); the suite
+# code itself never leaves the private repo.
+#
+# Secrets used: QA_SUITE_DEPLOY_KEY (read the private suite),
+# DO_QA_PAT (disposable droplet), GITHUB_TOKEN (own draft DMG).
+# Apple signing/notarization secrets are not required here — the app
+# build job already stapled the DMG. The droplet password is generated
+# fresh per run, never stored.
+name: macOS slim QA (hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: deploydash_app draft release tag (vX.Y.Z) whose arm64 DMG to certify
+        required: true
+        type: string
+      version:
+        description: Marketing version stamped into the DMG (X.Y.Z); defaults to tag without v
+        required: false
+        default: ""
+      build-number:
+        description: Build number recorded in DESK_MAC_DMG_BUILD_CONFIGURATION (informational)
+        required: false
+        default: "0"
+      qa-ref:
+        description: deploydash_qa ref carrying the slim gate
+        required: false
+        default: main
+  workflow_call:
+    inputs:
+      tag:
+        description: deploydash_app draft release tag (vX.Y.Z) whose arm64 DMG to certify
+        required: true
+        type: string
+      version:
+        description: Marketing version stamped into the DMG (X.Y.Z)
+        required: false
+        type: string
+        default: ""
+      build-number:
+        description: Build number recorded in DESK_MAC_DMG_BUILD_CONFIGURATION
+        required: false
+        type: string
+        default: "0"
+      qa-ref:
+        description: deploydash_qa ref carrying the slim gate
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-public-macos-slim
+  cancel-in-progress: false
+
+jobs:
+  slim:
+    name: macOS slim artifact gate
+    runs-on: macos-15
+    timeout-minutes: 360
+    env:
+      E2E_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Mask consumed secrets
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.DO_QA_PAT }}"
+          echo "::add-mask::${{ secrets.QA_SUITE_DEPLOY_KEY }}"
+
+      - name: Check out private QA suite
+        uses: actions/checkout@v5
+        with:
+          repository: deploydash/deploydash_qa
+          ref: ${{ inputs.qa-ref }}
+          ssh-key: ${{ secrets.QA_SUITE_DEPLOY_KEY }}
+          path: qa
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@e3d21b6c8167cbbd589c0d807efc59c2f641d9de
+
+      - name: Install pinned Python for the gate
+        shell: bash
+        run: |
+          # The gate runs on 3.13.14 as designed. setup-python is unusable
+          # (python 3.13.14 is newer than images carry, and reinstalling
+          # Homebrew Python fights the runner), so uv owns the toolchain.
+          uv python install 3.13.14
+          uv_python="$(uv python find 3.13.14)"
+          echo "Using uv-managed Python: ${uv_python}"
+          version="$("${uv_python}" -c 'import platform; print(platform.python_version())')"
+          if [[ "${version}" != "3.13.14" ]]; then
+            echo "Expected Python 3.13.14, resolved ${version}." >&2
+            exit 1
+          fi
+          echo "$(dirname "${uv_python}")" >> "${GITHUB_PATH}"
+
+      - name: Resolve tag, version, and app commit
+        id: app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build-number }}
+        run: |
+          tag="${INPUT_TAG}"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag must look like vX.Y.Z, got: ${tag}" >&2
+            exit 1
+          fi
+          version="${INPUT_VERSION}"
+          if [[ -z "${version}" ]]; then
+            version="${tag#v}"
+          fi
+          if [[ "${tag}" != "v${version}" ]]; then
+            echo "tag ${tag} does not match version ${version}." >&2
+            exit 1
+          fi
+          sha="$(gh api "repos/deploydash/deploydash_app/commits/${tag}" --jq .sha)"
+          if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "could not resolve a 40-character commit for ${tag}." >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "build_number=${INPUT_BUILD_NUMBER}" >> "${GITHUB_OUTPUT}"
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## macOS slim E2E"
+            echo ""
+            echo "- draft tag: \`${tag}\`"
+            echo "- app commit: \`${sha}\`"
+            echo "- version: \`${version}\` (build ${INPUT_BUILD_NUMBER})"
+            echo "- run id: \`${E2E_RUN_ID}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Download arm64 DMG from draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.app.outputs.tag }}
+          VERSION: ${{ steps.app.outputs.version }}
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/candidate"
+          rm -f "${GITHUB_WORKSPACE}"/candidate/DeployDash-*-arm64.dmg
+          gh release download "${TAG}" \
+            --repo deploydash/deploydash_app \
+            --pattern "DeployDash-*-arm64.dmg" \
+            --dir "${GITHUB_WORKSPACE}/candidate"
+          dmg="$(ls -1 "${GITHUB_WORKSPACE}"/candidate/DeployDash-*-arm64.dmg 2>/dev/null | head -n1 || true)"
+          if [[ -z "${dmg}" || ! -f "${dmg}" ]]; then
+            echo "No DeployDash-*-arm64.dmg on draft release ${TAG}." >&2
+            exit 1
+          fi
+          # Prefer the versioned name when several match; still accept one file.
+          preferred="${GITHUB_WORKSPACE}/candidate/DeployDash-v${VERSION}-arm64.dmg"
+          if [[ -f "${preferred}" ]]; then
+            dmg="${preferred}"
+          fi
+          echo "DESK_MAC_DMG=${dmg}" >> "${GITHUB_ENV}"
+          echo "Downloaded: ${dmg}"
+          ls -la "${dmg}"
+
+      - name: Enable automation mode and localhost SSH
+        shell: bash
+        run: |
+          sudo -n automationmodetool enable-automationmode-without-authentication \
+            || echo "automationmodetool skipped (rc=$?)"
+          # Remote Login may already be on; ignore non-zero if so.
+          sudo -n systemsetup -setremotelogin on || true
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          key="${HOME}/.ssh/qa-mac-localhost"
+          if [[ ! -f "${key}" ]]; then
+            ssh-keygen -t ed25519 -N "" -f "${key}" -q
+          fi
+          touch ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          pub="$(cat "${key}.pub")"
+          if ! grep -qxF "${pub}" ~/.ssh/authorized_keys; then
+            echo "${pub}" >> ~/.ssh/authorized_keys
+          fi
+          ssh-keyscan -t ed25519 localhost >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -i "${key}" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "${USER}@localhost" "echo LOCALHOST-SSH-OK"
+          echo "DESK_MAC_SSH_LOCAL=${USER}@localhost" >> "${GITHUB_ENV}"
+          echo "DESK_MAC_SSH_USER_LOCAL=${USER}" >> "${GITHUB_ENV}"
+          echo "DESK_MAC_SSH_KEY_LOCAL=${key}" >> "${GITHUB_ENV}"
+
+      - name: Generate the disposable droplet password
+        shell: bash
+        run: |
+          password="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+          echo "::add-mask::${password}"
+          echo "E2E_VM_PASSWORD=${password}" >> "${GITHUB_ENV}"
+
+      - name: Self-test the gate configuration
+        shell: bash
+        env:
+          DEPLOYDASH_E2E_DO_PAT: ${{ secrets.DO_QA_PAT }}
+          DEPLOYDASH_E2E_VM_PASSWORD: ${{ env.E2E_VM_PASSWORD }}
+          DESK_MAC_SSH: ${{ env.DESK_MAC_SSH_LOCAL }}
+          DESK_MAC_SSH_USER: ${{ env.DESK_MAC_SSH_USER_LOCAL }}
+          DESK_MAC_SSH_KEY: ${{ env.DESK_MAC_SSH_KEY_LOCAL }}
+          DESK_MAC_DMG: ${{ env.DESK_MAC_DMG }}
+          DESK_MAC_DMG_SOURCE_COMMIT: ${{ steps.app.outputs.sha }}
+          DESK_MAC_DMG_BUILD_CONFIGURATION: release;version=${{ steps.app.outputs.version }};build=${{ steps.app.outputs.build_number }};arch=arm64
+        run: bash qa/e2e/runners/run_desk_macos_slim.sh --self-test
+
+      - name: Run macOS slim artifact gate
+        shell: bash
+        env:
+          DEPLOYDASH_E2E_DO_PAT: ${{ secrets.DO_QA_PAT }}
+          DEPLOYDASH_E2E_VM_PASSWORD: ${{ env.E2E_VM_PASSWORD }}
+          DEPLOYDASH_E2E_RUN_ID: ${{ env.E2E_RUN_ID }}
+          DESK_MAC_SSH: ${{ env.DESK_MAC_SSH_LOCAL }}
+          DESK_MAC_SSH_USER: ${{ env.DESK_MAC_SSH_USER_LOCAL }}
+          DESK_MAC_SSH_KEY: ${{ env.DESK_MAC_SSH_KEY_LOCAL }}
+          DESK_MAC_DMG: ${{ env.DESK_MAC_DMG }}
+          DESK_MAC_DMG_SOURCE_COMMIT: ${{ steps.app.outputs.sha }}
+          DESK_MAC_DMG_BUILD_CONFIGURATION: release;version=${{ steps.app.outputs.version }};build=${{ steps.app.outputs.build_number }};arch=arm64
+        run: bash qa/e2e/runners/run_desk_macos_slim.sh
+
+      - name: Upload gate report and evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-slim-${{ env.E2E_RUN_ID }}
+          path: qa/e2e/local/runs/desk-macos-artifact/${{ env.E2E_RUN_ID }}/
+          if-no-files-found: warn
+          retention-days: 30
