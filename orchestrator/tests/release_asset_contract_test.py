@@ -166,10 +166,19 @@ class ReleaseAssetContractTest(unittest.TestCase):
 
         self.assertRegex(
             release,
-            r"needs:\s*\[\s*version,\s*build-direct,\s*build-snap,\s*slim-windows\s*\]",
+            r"needs:\s*\[\s*version,\s*build-direct,\s*build-snap,\s*slim-windows,\s*slim-macos\s*\]",
         )
         self.assertIn("needs.slim-windows.result == 'success'", release)
         self.assertIn("client_payload[skip_windows]", release)
+
+    def test_qa_handoff_waits_for_macos_slim_and_skips_qa_macos_leg(self):
+        """Handoff fires only after the macOS slim passes and tells QA macOS is covered."""
+        root = Path(__file__).resolve().parents[2]
+        release = (root / ".github/workflows/release.yml").read_text()
+
+        self.assertIn("needs.slim-macos.result == 'success'", release)
+        self.assertIn("client_payload[skip_macos]", release)
+        self.assertIn("macOS slim QA (hosted)", release)
 
     def test_publish_refuses_without_hosted_slim_success(self):
         """validate-qa re-checks the push run's slim conclusion (D7)."""
@@ -178,6 +187,8 @@ class ReleaseAssetContractTest(unittest.TestCase):
 
         self.assertIn("Require hosted Windows slim success for this SHA", release)
         self.assertIn('select(.name == "Windows slim QA (hosted)")', release)
+        self.assertIn("Require hosted macOS slim success for this SHA", release)
+        self.assertIn('select(.name == "macOS slim QA (hosted)")', release)
         self.assertIn("refusing to publish", release)
 
 

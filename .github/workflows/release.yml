@@ -9,15 +9,18 @@ name: Release
 #    they pass.
 # 3. `builds` produces every platform artifact and attaches it to a DRAFT
 #    GitHub release. Nothing is downloadable yet.
-# 4. `slim-windows` runs the private Windows slim suite on a hosted
-#    runner via the in-repo caller (free minutes, public logs). The
-#    suite's code stays in the private repo; only its verdict matters.
+# 4. `slim-windows` and `slim-macos` run the private slim suites on
+#    hosted runners via the in-repo callers (free minutes, public
+#    logs). The suites' code stays in the private repo; only their
+#    verdicts matter. slim-macos waits for the draft DMG (it needs
+#    build-direct); slim-windows rebuilds on its runner.
 # 5. `handoff` asks the private QA repository (deploydash/deploydash_qa)
-#    to validate the remaining legs (macOS slim; Windows is covered by
-#    step 4 and skipped there). Handoff waits for slim-windows.
+#    for full-gate validation; the hosted slim legs already covered
+#    are skipped there (skip_windows/skip_macos). Handoff waits for
+#    both slim legs.
 # 6. On a `qa-completed` dispatch with a passing conclusion, `validate-qa`
-#    re-validates the callback payload, re-checks the push run's Windows
-#    slim conclusion, and `store-submit` submits the
+#    re-validates the callback payload, re-checks the push run's slim
+#    conclusions, and `store-submit` submits the
 #    draft MSIX packages to the Microsoft Store, commits for
 #    certification, and marks the draft with the submission id.
 # 7. The scheduled Store Publish Watch (store-publish-watch.yml) flips
@@ -185,6 +188,20 @@ jobs:
       candidate-version: ${{ needs.version.outputs.build_name }}
     secrets: inherit
 
+  slim-macos:
+    name: macOS slim QA (hosted)
+    if: needs.version.outputs.windows_only != 'true'
+    needs: [version, tests, build-direct]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/qa-public-macos-slim.yml
+    with:
+      tag: ${{ github.ref_name }}
+      version: ${{ needs.version.outputs.build_name }}
+      build-number: ${{ needs.version.outputs.build_number }}
+      qa-ref: main
+    secrets: inherit
+
   build-direct:
     name: Direct builds (.deb, DMG, Store candidate)
     needs: [version, tests]
@@ -217,8 +234,8 @@ jobs:
 
   handoff:
     name: Request private QA validation
-    if: ${{ always() && needs.version.result == 'success' && needs.build-direct.result == 'success' && (needs.build-snap.result == 'success' || needs.build-snap.result == 'skipped') && (needs.slim-windows.result == 'success' || needs.slim-windows.result == 'skipped') }}
-    needs: [version, build-direct, build-snap, slim-windows]
+    if: ${{ always() && needs.version.result == 'success' && needs.build-direct.result == 'success' && (needs.build-snap.result == 'success' || needs.build-snap.result == 'skipped') && (needs.slim-windows.result == 'success' || needs.slim-windows.result == 'skipped') && (needs.slim-macos.result == 'success' || needs.slim-macos.result == 'skipped') }}
+    needs: [version, build-direct, build-snap, slim-windows, slim-macos]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -243,7 +260,8 @@ jobs:
             -f client_payload[sha]="${GITHUB_SHA}" \
             -f client_payload[build_name]="${{ needs.version.outputs.build_name }}" \
             -f client_payload[build_number]="${{ needs.version.outputs.build_number }}" \
-            -f client_payload[skip_windows]="${{ needs.slim-windows.result == 'success' }}"
+            -f client_payload[skip_windows]="${{ needs.slim-windows.result == 'success' }}" \
+            -f client_payload[skip_macos]="${{ needs.slim-macos.result == 'success' }}"
 
   validate-qa:
     name: Validate QA callback payload
@@ -310,6 +328,29 @@ jobs:
             exit 1
           fi
           echo "Windows slim '${conclusion}' for ${QA_TAG}; continuing."
+
+      - name: Require hosted macOS slim success for this SHA
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QA_TAG: ${{ steps.validate.outputs.tag }}
+          QA_SHA: ${{ steps.validate.outputs.sha }}
+        run: |
+          # The macOS leg runs in the tag-push run (slim-macos), not in
+          # QA; handoff already waits for it, so this only bites on forged
+          # or out-of-band callbacks. Skipped is accepted: slim-macos
+          # skips only for windows_only tags, which have no macOS line.
+          run_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${QA_SHA}" --jq '[.workflow_runs[].id] | max // empty')"
+          if [[ -z "${run_id}" ]]; then
+            echo "No release run found for ${QA_SHA}; refusing to publish." >&2
+            exit 1
+          fi
+          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" --jq '[.jobs[] | select(.name == "macOS slim QA (hosted)") | .conclusion] | first // empty')"
+          if [[ "${conclusion}" != "success" && "${conclusion}" != "skipped" ]]; then
+            echo "macOS slim is '${conclusion}' for ${QA_TAG}; refusing to publish." >&2
+            exit 1
+          fi
+          echo "macOS slim '${conclusion}' for ${QA_TAG}; continuing."
 
   store-submit:
     name: Submit MSIX packages to the Store
