@@ -178,14 +178,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # arm64 on the desk Mac self-hosted runner (dd-mac-dmg).
+          # SPIKE (M0.1): arm64 on hosted macos-15. Revert to the
+          # dd-mac-dmg self-hosted runner unless the spike goes green.
           # x64 restored on macos-26-intel when hosted Mac minutes allow:
           #   - arch: x64
           #     dmg_arch: x64
           #     runs-on: macos-26-intel
           - arch: arm64
             dmg_arch: arm64
-    runs-on: [self-hosted, macOS, ARM64, dd-mac-dmg]
+    runs-on: macos-15
     env:
       DEPLOYDASH_APPLE_ID: ${{ secrets.DEPLOYDASH_APPLE_ID }}
       DEPLOYDASH_APPLE_TEAM_ID: ${{ secrets.DEPLOYDASH_APPLE_TEAM_ID }}
@@ -265,6 +266,15 @@ jobs:
             -s \
             -k "${KEYCHAIN_PASSWORD}" \
             "${KEYCHAIN_PATH}"
+          # Hosted runners carry no Developer ID intermediate in any user
+          # keychain, so fetch Apple's intermediates into the CI keychain
+          # and the chain builds (spike M0.1; harmless on the desk Mac).
+          for ca in G3 G4; do
+            curl -fsSL -o "${RUNNER_TEMP}/AppleWWDRCA${ca}.cer" \
+              "https://www.apple.com/certificateauthority/AppleWWDRCA${ca}.cer"
+            security import "${RUNNER_TEMP}/AppleWWDRCA${ca}.cer" \
+              -k "${KEYCHAIN_PATH}"
+          done
           # Append, never replace: the Developer ID intermediate lives in
           # the login keychain on this Mac, and replacing the search list
           # makes the chain unbuildable (codesign errSecInternalComponent).
