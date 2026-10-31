@@ -1,14 +1,16 @@
-# Driver differential: Swift AX tools vs osascript shims on hosted macos-15 (P1.2).
-# Dispatch-only permanent diagnostic. Everything runs over self-SSH (the gate's
-# context). Pass contract:
-#   - reads (full + substring dumps) MUST be byte-identical, Swift vs shim;
-#   - axpress NOT-FOUND MUST agree (rc 1 + same message);
-#   - shim axpress MUST land (PRESS OK + window closes); Swift's verdict is
-#     recorded (PRESS FAIL expected: ad-hoc writes lack caller trust — if
-#     Swift ever presses OK the port is unnecessary and this FAILS LOUD);
-#   - shim axclick MUST land (frontmost flips); both report CLICKAT-OK;
-#   - keystroke-over-SSH MUST exit 0.
-# Timings for every dump land in the step summary (retune evidence).
+# Driver proof on hosted macos-15 (P1.2a). Dispatch-only permanent
+# diagnostic. Everything runs over self-SSH (the gate's context).
+# Pass contract:
+#   - Swift tools MUST fail cleanly (`no running app`, exit 1): raw AX
+#     cannot even resolve Finder on hosted runners (the port's raison
+#     d'etre). If Swift ever resolves, byte-parity with the shim dump
+#     is required instead (future-proof branch, never yet taken).
+#   - shim axdump MUST return populated AX-style trees (3 identical
+#     rounds), shim axpress MUST land (PRESS OK + window closes),
+#     shim axclick MUST land (frontmost flips), keystroke MUST exit 0.
+#   - Flutter leg: the M0.1 spike DMG installs, the real onboarding
+#     tree is readable (`Get started`, zero intro fields).
+# Timings for every shim dump land in the step summary.
 name: Mac driver differential (hosted)
 
 on:
@@ -18,6 +20,10 @@ on:
         description: deploydash_qa ref carrying the osascript shims
         required: false
         default: ci/mac-osascript-driver
+      spike-run-id:
+        description: M0.1 run id whose deploydash-macos-arm64 artifact feeds the Flutter leg
+        required: false
+        default: "41157814456"
 
 permissions:
   contents: read
@@ -47,6 +53,16 @@ jobs:
           ref: ${{ inputs.qa-ref }}
           ssh-key: ${{ secrets.QA_SUITE_DEPLOY_KEY }}
           path: qa-shims
+
+      - name: Download spike DMG for the Flutter leg
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download "${{ inputs.spike-run-id }}" \
+            -R deploydash/deploydash_app -n deploydash-macos-arm64 \
+            -D "${RUNNER_TEMP}/spike-dmg"
+          ls -la "${RUNNER_TEMP}/spike-dmg"
 
       - name: Build Swift tools
         shell: bash
@@ -98,11 +114,10 @@ jobs:
           osascript -e 'tell application "System Events" to tell process "Finder" to return {role, title, value, position, size} of every UI element of window 1' 2>&1 | head -c 600
           echo ""
 
-      - name: Run differential over self-SSH
+      - name: Run native differential over self-SSH
         shell: bash
         run: |
-          # The gate drives the Mac over SSH, so the differential runs
-          # there too. Same machine/user, so absolute tool paths carry
+          # Same machine/user over loopback, so absolute tool paths carry
           # over; only the bootstrap context differs. (echo-built: a
           # flush heredoc terminator breaks YAML, an indented one
           # silently swallows the rest of the step.)
@@ -141,29 +156,51 @@ jobs:
             echo 'osascript -e "tell application \"Finder\" to make new Finder window"'
             echo 'sleep 2'
             echo 'echo "windows: $(wincount)"'
+            echo '"$SWIFT_BIN/axdump" Finder > "$OUT/swift-full.txt" 2> "$OUT/swift-full.err"; swift_rc=$?'
+            echo 'echo "swift dump rc=$swift_rc"'
+            echo 'cat "$OUT/swift-full.err"'
+            echo 'if [ "$swift_rc" = "1" ] && grep -q "no running app named Finder" "$OUT/swift-full.err"; then'
+            echo '  echo "DIFF-OK: raw AX dead on hosted as expected (port stands)"'
+            echo '  SWIFT_ALIVE=0'
+            echo 'else'
+            echo '  echo "DIFF-NOTE: Swift resolved; parity required instead"'
+            echo '  SWIFT_ALIVE=1'
+            echo 'fi'
             echo 'r=1'
             echo 'while [ $r -le 3 ]; do'
-            echo '  timed_dump "$SWIFT_BIN/axdump" "" "$OUT/swift-full-$r.txt" "swift-full-$r"'
             echo '  timed_dump "$SHIM_BIN/axdump" "" "$OUT/shim-full-$r.txt" "shim-full-$r"'
             echo '  r=$((r + 1))'
             echo 'done'
-            echo 'cmp_files "$OUT/swift-full-1.txt" "$OUT/swift-full-2.txt" "swift-rounds"'
-            echo 'cmp_files "$OUT/swift-full-2.txt" "$OUT/swift-full-3.txt" "swift-rounds"'
             echo 'cmp_files "$OUT/shim-full-1.txt" "$OUT/shim-full-2.txt" "shim-rounds"'
             echo 'cmp_files "$OUT/shim-full-2.txt" "$OUT/shim-full-3.txt" "shim-rounds"'
-            echo 'cmp_files "$OUT/swift-full-1.txt" "$OUT/shim-full-1.txt" "swift-vs-shim-full"'
-            echo 'wc -l "$OUT/swift-full-1.txt" "$OUT/shim-full-1.txt"'
-            echo 'label=$(grep -o "\\[[^]]*\\]" "$OUT/swift-full-1.txt" | grep -v "\\[\\]" | head -n 1 | tr -d "[]")'
+            echo 'if [ "$SWIFT_ALIVE" = "1" ]; then'
+            echo '  cmp_files "$OUT/swift-full.txt" "$OUT/shim-full-1.txt" "swift-vs-shim-full"'
+            echo 'fi'
+            echo 'wc -l "$OUT/shim-full-1.txt"'
+            echo 'if grep -qE "AXButton|AXTextField|AXStaticText" "$OUT/shim-full-1.txt"; then'
+            echo '  echo "DIFF-OK: shim tree carries AX-style roles"'
+            echo 'else'
+            echo '  echo "DIFF-FAIL: shim tree lacks AX-style roles"; FAIL=1'
+            echo 'fi'
+            echo 'label=$(grep -o "\\[[^]]*\\]" "$OUT/shim-full-1.txt" | grep -v "\\[\\]" | head -n 1 | tr -d "[]")'
             echo 'if [ -z "$label" ]; then label="e"; fi'
             echo 'echo "substring probe: [$label]"'
-            echo 'timed_dump "$SWIFT_BIN/axdump" "$label" "$OUT/swift-sub.txt" "swift-sub-1"'
-            echo 'timed_dump "$SHIM_BIN/axdump" "$label" "$OUT/shim-sub.txt" "shim-sub-1"'
-            echo 'cmp_files "$OUT/swift-sub.txt" "$OUT/shim-sub.txt" "swift-vs-shim-substring"'
+            echo 'timed_dump "$SHIM_BIN/axdump" "$label" "$OUT/shim-sub-1.txt" "shim-sub-1"'
+            echo 'timed_dump "$SHIM_BIN/axdump" "$label" "$OUT/shim-sub-2.txt" "shim-sub-2"'
+            echo 'cmp_files "$OUT/shim-sub-1.txt" "$OUT/shim-sub-2.txt" "shim-substring-rounds"'
+            echo 'if grep -q . "$OUT/shim-sub-1.txt"; then'
+            echo '  echo "DIFF-OK: substring dump non-empty"'
+            echo 'else'
+            echo '  echo "DIFF-FAIL: substring dump empty"; FAIL=1'
+            echo 'fi'
             echo '"$SWIFT_BIN/axpress" Finder "zzz-no-such-button-zzz" > "$OUT/swift-nf.txt" 2>&1; swift_rc=$?'
+            echo 'echo "swift notfound rc=$swift_rc : $(cat "$OUT/swift-nf.txt") (recorded only)"'
             echo '"$SHIM_BIN/axpress" Finder "zzz-no-such-button-zzz" > "$OUT/shim-nf.txt" 2>&1; shim_rc=$?'
-            echo 'echo "notfound swift rc=$swift_rc shim rc=$shim_rc"'
-            echo 'if [ "$swift_rc" = "$shim_rc" ]; then echo "DIFF-OK: notfound rc agree"; else echo "DIFF-FAIL: notfound rc differ"; FAIL=1; fi'
-            echo 'cmp_files "$OUT/swift-nf.txt" "$OUT/shim-nf.txt" "notfound-stdout"'
+            echo 'if [ "$shim_rc" = "1" ] && grep -q "NOT-FOUND zzz-no-such-button-zzz" "$OUT/shim-nf.txt"; then'
+            echo '  echo "DIFF-OK: shim NOT-FOUND contract"'
+            echo 'else'
+            echo '  echo "DIFF-FAIL: shim NOT-FOUND contract broken"; FAIL=1'
+            echo 'fi'
             echo 'close_label=$(grep -i "button" "$OUT/shim-full-1.txt" | grep -i "close" | head -n 1 | grep -o "\\[[^]]*\\]" | tr -d "[]")'
             echo 'if [ -z "$close_label" ]; then'
             echo '  echo "DIFF-SKIP: no close-labeled button; positive press unproven"'
@@ -180,7 +217,7 @@ jobs:
             echo '  "$SWIFT_BIN/axpress" Finder "$close_label" > "$OUT/swift-press.txt" 2>&1; swift_rc=$?'
             echo '  sleep 2'
             echo '  after_swift=$(wincount)'
-            echo '  echo "swift press rc=$swift_rc windows $mid -> $after_swift : $(cat "$OUT/swift-press.txt")"'
+            echo '  echo "swift press rc=$swift_rc windows $mid -> $after_swift : $(cat "$OUT/swift-press.txt") $(cat "$OUT/swift-press.err" 2>/dev/null || true)"'
             echo '  if [ "$shim_rc" = "0" ] && [ "$after_shim" -lt "$before" ]; then'
             echo '    echo "DIFF-OK: shim press landed"'
             echo '  else'
@@ -194,7 +231,7 @@ jobs:
             echo 'fi'
             echo 'open -a TextEdit 2>/dev/null || true'
             echo 'sleep 1'
-            echo 'osascript -e "tell application \"System Events\" to set frontmost of process \"TextEdit\" to true" 2>/dev/null || true'
+            echo 'osascript -e "tell application \"System Events\" to set frontmost of process \"TextEdit\" to true" >/dev/null 2>&1 || true'
             echo 'sleep 1'
             echo 'pos=$(osascript -e "tell application \"System Events\" to tell process \"Finder\" to return position of window 1")'
             echo 'size=$(osascript -e "tell application \"System Events\" to tell process \"Finder\" to return size of window 1")'
@@ -225,14 +262,62 @@ jobs:
             "SWIFT_BIN=${RUNNER_TEMP}/swift-bin SHIM_BIN=${GITHUB_WORKSPACE}/qa-shims/qa/e2e/harnesses/desktop_macos/bin bash /tmp/driver-diff.sh" \
             | tee "${RUNNER_TEMP}/diff-log.txt"
 
+      - name: Run Flutter leg over self-SSH
+        shell: bash
+        run: |
+          # Installs the spike DMG and proves the REAL Flutter onboarding
+          # tree is shim-readable (leg_unlock's assertions, rehearsed).
+          {
+            echo 'set -u'
+            echo 'OUT="/tmp/driver-flutter"'
+            echo 'mkdir -p "$OUT"'
+            echo 'rm -f "$OUT"/*'
+            echo 'FAIL=0'
+            echo 'DMG=$(ls "$SPIKE_DIR"/DeployDash-*.dmg | head -n 1)'
+            echo 'echo "dmg: $DMG"'
+            echo 'hdiutil attach "$DMG" -nobrowse -readonly -mountpoint /tmp/spike-mount'
+            echo 'cp -R /tmp/spike-mount/Deploy\ Dash.app /Applications/'
+            echo 'hdiutil detach /tmp/spike-mount'
+            echo 'if codesign --verify --deep --strict /Applications/Deploy\ Dash.app; then'
+            echo '  echo "FLUTTER-OK: signature verifies"'
+            echo 'else'
+            echo '  echo "FLUTTER-FAIL: signature rejected"; FAIL=1'
+            echo 'fi'
+            echo 'open -a "Deploy Dash"'
+            echo 'sleep 15'
+            echo '"$SHIM_BIN/axdump" "Deploy Dash" > "$OUT/flutter-intro.txt" 2> "$OUT/flutter-intro.err"; rc=$?'
+            echo 'echo "flutter dump rc=$rc"'
+            echo 'cat "$OUT/flutter-intro.txt"'
+            echo 'if grep -q "Get started" "$OUT/flutter-intro.txt"; then'
+            echo '  echo "FLUTTER-OK: onboarding intro readable"'
+            echo 'else'
+            echo '  echo "FLUTTER-FAIL: no intro marker"; FAIL=1'
+            echo 'fi'
+            echo 'fields=$(grep -c "TextField" "$OUT/flutter-intro.txt" || true)'
+            echo 'echo "intro TextField count: $fields"'
+            echo 'if [ "$fields" = "0" ]; then'
+            echo '  echo "FLUTTER-OK: zero intro fields"'
+            echo 'else'
+            echo '  echo "FLUTTER-FAIL: expected 0 intro fields"; FAIL=1'
+            echo 'fi'
+            echo 'screencapture -x "$OUT/flutter-intro.png" || true'
+            echo 'pkill -x "Deploy Dash" || true'
+            echo 'echo "FLUTTER-RESULT fail=$FAIL"'
+            echo 'exit $FAIL'
+          } > /tmp/driver-flutter.sh
+          bash -n /tmp/driver-flutter.sh && echo "flutter script syntax OK"
+          ssh -o BatchMode=yes -i "${HOME}/.ssh/diff-loopback" localhost \
+            "SPIKE_DIR=${RUNNER_TEMP}/spike-dmg SHIM_BIN=${GITHUB_WORKSPACE}/qa-shims/qa/e2e/harnesses/desktop_macos/bin bash /tmp/driver-flutter.sh" \
+            | tee "${RUNNER_TEMP}/flutter-log.txt"
+
       - name: Record timings
         if: always()
         shell: bash
         run: |
           {
-            echo "## Driver differential timings (seconds per dump)"
+            echo "## Driver timings on hosted macOS (seconds per dump)"
             echo ""
-            grep -E "^(swift|shim)-(full|sub)-[0-9]+ [0-9]+s" "${RUNNER_TEMP}/diff-log.txt" \
+            grep -E "^shim-(full|sub)-[0-9]+ [0-9]+s" "${RUNNER_TEMP}/diff-log.txt" \
               || echo "(no timing lines; see log)"
           } >> "${GITHUB_STEP_SUMMARY}"
 
@@ -243,6 +328,8 @@ jobs:
           name: macos-driver-differential-${{ github.run_id }}
           path: |
             /tmp/driver-diff/
+            /tmp/driver-flutter/
             ${{ runner.temp }}/diff-log.txt
+            ${{ runner.temp }}/flutter-log.txt
           if-no-files-found: warn
           retention-days: 14
