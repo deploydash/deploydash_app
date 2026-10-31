@@ -17,7 +17,7 @@ on:
         type: boolean
         default: false
       macos_only:
-        description: Run only the macOS DMG leg (laptop runner rehearsal)
+        description: Run only the macOS DMG leg (macOS-line rehearsal)
         required: false
         type: boolean
         default: false
@@ -58,7 +58,7 @@ on:
         required: false
         type: string
       macos_only:
-        description: Run only the macOS DMG leg (laptop runner rehearsal)
+        description: Run only the macOS DMG leg (macOS-line rehearsal)
         type: boolean
         default: true
       winmac_only:

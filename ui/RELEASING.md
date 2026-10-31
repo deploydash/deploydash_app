@@ -285,16 +285,23 @@ Notes:
 
 macOS builds run in
 `.github/workflows/desktop-direct-builds.yml` (called by `release.yml`
-on tags, runnable manually via `workflow_dispatch`). There is no Xcode
-Cloud workflow: its `ci_scripts` are deleted. While GitHub-hosted Mac
-minutes are exhausted, the arm64 DMG builds on the desk Mac self-hosted
-runner (`dd-mac-dmg`); the Intel leg is suspended and restores on
-`macos-26-intel` when minutes allow. Dispatch with `macos_only=true`
-to rehearse the macOS leg alone. Tags build Windows + macOS by default
-(`winmac_only`); the Ubuntu and Snap legs stay parked until their QA
-gates land. The certifying macOS gate (install +
-server onboarding against the app-built DMG) lives in the QA repository
-(`desk-macos-slim.yml` on the same runner); there is no app-repo
+on tags, runnable manually via `workflow_dispatch`) on stock
+`macos-15` hosted runners — sign, notarize, and staple included
+(WWDR G3+G4 intermediates are fetched into the CI keychain since
+hosted runners carry none, and `stapler staple` retries 3x against
+transient Apple CDN failures). There is no Xcode Cloud workflow:
+its `ci_scripts` are deleted. The Intel leg is suspended (native
+builds need `macos-26-intel`); the desk Mac self-hosted runner
+(`dd-mac-dmg`) stays warm as a one-commit `runs-on` fallback if
+hosted Mac minutes or notarization-from-hosted ever regress.
+Dispatch with `macos_only=true` to rehearse the macOS leg alone.
+Tags build Windows + macOS by default (`winmac_only`); the Ubuntu
+and Snap legs stay parked until their QA gates land. The certifying
+macOS gate (install + server onboarding against the app-built DMG)
+runs on `macos-15` via `qa-public-macos-slim.yml`, which checks out
+and runs the private suite from `deploydash/deploydash_qa` (Swift
+AX tools over self-SSH, no VoiceOver anywhere); the QA repo's own
+`desk-macos-slim.yml` remains the desk fallback. There is no app-repo
 install check. macOS release signing uses the repository secrets
 (`DEPLOYDASH_MACOS_SIGN_CERT_P12_BASE64` and friends); see the root
 `README.md` for the full secret list. The `.p12`-from-file path died
