@@ -1,10 +1,12 @@
 # Driver proof on hosted macos-15 (P1.2a). Dispatch-only permanent
 # diagnostic. Everything runs over self-SSH (the gate's context).
 # Pass contract:
-#   - Swift tools MUST fail cleanly (`no running app`, exit 1): raw AX
-#     cannot even resolve Finder on hosted runners (the port's raison
-#     d'etre). If Swift ever resolves, byte-parity with the shim dump
-#     is required instead (future-proof branch, never yet taken).
+#   - Swift tools are viability-probed, not trusted: raw AX reads DO
+#     work over self-SSH on hosted runners (only the job-shell context
+#     is blind). If Swift resolves, byte-parity with the shim dump is
+#     required; Swift press/click landing is measured too. If raw AX
+#     proves FULLY viable (reads+press+click all land), the port is
+#     unnecessary and this FAILS LOUD for a human pivot decision.
 #   - shim axdump MUST return populated AX-style trees (3 identical
 #     rounds), shim axpress MUST land (PRESS OK + window closes),
 #     shim axclick MUST land (frontmost flips), keystroke MUST exit 0.
@@ -127,6 +129,9 @@ jobs:
             echo 'mkdir -p "$OUT"'
             echo 'rm -f "$OUT"/*'
             echo 'FAIL=0'
+            echo 'SWIFT_DUMP_OK=0'
+            echo 'SWIFT_PRESS_LANDED=0'
+            echo 'SWIFT_CLICK_LANDED=0'
             echo 'cmp_files() {'
             echo '  if cmp -s "$1" "$2"; then'
             echo '    echo "DIFF-OK: $3 identical"'
@@ -160,11 +165,14 @@ jobs:
             echo 'echo "swift dump rc=$swift_rc"'
             echo 'cat "$OUT/swift-full.err"'
             echo 'if [ "$swift_rc" = "1" ] && grep -q "no running app named Finder" "$OUT/swift-full.err"; then'
-            echo '  echo "DIFF-OK: raw AX dead on hosted as expected (port stands)"'
+            echo '  echo "DIFF-NOTE: raw AX reads dead on hosted (port stands by default)"'
             echo '  SWIFT_ALIVE=0'
             echo 'else'
             echo '  echo "DIFF-NOTE: Swift resolved; parity required instead"'
             echo '  SWIFT_ALIVE=1'
+            echo 'fi'
+            echo 'if [ "$SWIFT_ALIVE" = "1" ] && grep -q "AXDUMP-DONE" "$OUT/swift-full.txt" && [ "$(wc -l < "$OUT/swift-full.txt")" -gt 1 ]; then'
+            echo '  SWIFT_DUMP_OK=1'
             echo 'fi'
             echo 'r=1'
             echo 'while [ $r -le 3 ]; do'
@@ -201,7 +209,7 @@ jobs:
             echo 'else'
             echo '  echo "DIFF-FAIL: shim NOT-FOUND contract broken"; FAIL=1'
             echo 'fi'
-            echo 'close_label=$(grep -i "button" "$OUT/shim-full-1.txt" | grep -i "close" | head -n 1 | grep -o "\\[[^]]*\\]" | tr -d "[]")'
+            echo 'close_label=$(grep -i "button" "$OUT/swift-full.txt" | grep -i "close" | head -n 1 | grep -o "\\[[^]]*\\]" | tr -d "[]")'
             echo 'if [ -z "$close_label" ]; then'
             echo '  echo "DIFF-SKIP: no close-labeled button; positive press unproven"'
             echo 'else'
@@ -224,7 +232,8 @@ jobs:
             echo '    echo "DIFF-FAIL: shim press did not land"; FAIL=1'
             echo '  fi'
             echo '  if [ "$swift_rc" = "0" ] && [ "$after_swift" -lt "$mid" ]; then'
-            echo '    echo "DIFF-FAIL: UNEXPECTED raw AXPress landed on hosted; port may be unnecessary"; FAIL=1'
+            echo '    echo "DIFF-NOTE: raw AXPress LANDED on hosted (viability input)"'
+            echo '    SWIFT_PRESS_LANDED=1'
             echo '  else'
             echo '    echo "DIFF-OK: raw AXPress denied as expected (port stands)"'
             echo '  fi'
@@ -249,10 +258,25 @@ jobs:
             echo 'fi'
             echo '"$SWIFT_BIN/axclick" "$cx" "$cy" > "$OUT/swift-click.txt" 2>&1; swift_rc=$?'
             echo 'echo "swift click rc=$swift_rc : $(cat "$OUT/swift-click.txt") (recorded only)"'
+            echo 'osascript -e "tell application \"System Events\" to set frontmost of process \"TextEdit\" to true" >/dev/null 2>&1 || true'
+            echo 'sleep 1'
+            echo '"$SWIFT_BIN/axclick" "$cx" "$cy" >/dev/null 2>&1 || true'
+            echo 'sleep 1'
+            echo 'if [ "$(frontmost Finder)" = "true" ]; then'
+            echo '  echo "DIFF-NOTE: raw CGEvent click LANDED on hosted (viability input)"'
+            echo '  SWIFT_CLICK_LANDED=1'
+            echo 'else'
+            echo '  echo "DIFF-OK: raw CGEvent click denied as expected (port stands)"'
+            echo 'fi'
             echo 'if osascript -e "tell application \"System Events\" to key code 53" 2> "$OUT/keystroke.err"; then'
             echo '  echo "DIFF-OK: keystroke over SSH rc=0"'
             echo 'else'
             echo '  echo "DIFF-FAIL: keystroke over SSH failed"; FAIL=1'
+            echo 'fi'
+            echo 'if [ "$SWIFT_DUMP_OK" = "1" ] && [ "$SWIFT_PRESS_LANDED" = "1" ] && [ "$SWIFT_CLICK_LANDED" = "1" ]; then'
+            echo '  echo "DIFF-FAIL: raw AX fully viable over SSH (reads+press+click); port unnecessary - human pivot decision"; FAIL=1'
+            echo 'else'
+            echo '  echo "DIFF-OK: raw AX not fully viable (port stands)"'
             echo 'fi'
             echo 'echo "DIFF-RESULT fail=$FAIL"'
             echo 'exit $FAIL'
