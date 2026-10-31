@@ -119,7 +119,7 @@ jobs:
           # previous shipped version to this candidate (mirrors the QA
           # gate's lane resolution). Public release data needs no token
           # scopes.
-          previous="$(gh release list \
+          previous="$(gh release list --repo "${GITHUB_REPOSITORY}" \
             --exclude-drafts --exclude-pre-releases --limit 50 \
             --json tagName --jq '[.[] | .tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort | last // empty')"
           if [[ -z "${previous}" ]]; then
