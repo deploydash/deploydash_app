@@ -1,0 +1,100 @@
+# Diagnostic probe for the hosted-Mac split, Phase 0 (M0.2 + M0.3).
+# Dispatch-only; kept as a permanent diagnostic like the Windows probe.
+# Proves, on hosted macos-15:
+#   M0.2 osascript/System Events can read AX trees (baked TCC grants),
+#        directly AND over self-SSH; Swift AX negative control included.
+#   M0.3 self-SSH works (Remote Login + loopback key from the job).
+name: Probe hosted macOS AX and self-SSH
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Console session and sudo proof
+        shell: bash
+        run: |
+          whoami
+          echo "console_owner=$(stat -f '%Su' /dev/console)"
+          if ! sudo -n true 2>/dev/null; then
+            echo "passwordless sudo is unavailable; self-SSH setup cannot proceed." >&2
+            exit 1
+          fi
+          echo "passwordless sudo OK"
+
+      - name: Enable self-SSH (M0.3)
+        shell: bash
+        run: |
+          sudo systemsetup -setremotelogin on
+          mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
+          ssh-keygen -t ed25519 -N '' -f "${HOME}/.ssh/probe-loopback" -q
+          cat "${HOME}/.ssh/probe-loopback.pub" >> "${HOME}/.ssh/authorized_keys"
+          chmod 600 "${HOME}/.ssh/authorized_keys"
+          for i in $(seq 1 6); do
+            if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                -i "${HOME}/.ssh/probe-loopback" localhost 'echo SSH-OK' 2>/dev/null; then
+              echo "self-SSH up after ${i} tries"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "self-SSH never came up." >&2
+          exit 1
+
+      - name: osascript AX probe, direct (M0.2)
+        shell: bash
+        run: |
+          # Deterministic target: a fresh Finder window always has AX children.
+          osascript -e 'tell application "Finder" to make new Finder window'
+          sleep 2
+          procs="$(osascript -e 'tell application "System Events" to get name of every process')"
+          echo "${procs}" | grep -q Finder || { echo "Finder missing from process list." >&2; exit 1; }
+          echo "System Events sees $(echo "${procs}" | tr ',' '\n' | wc -l) processes"
+          result="$(osascript -e 'tell application "System Events" to tell process "Finder"
+            set elCount to count of entire contents of window 1
+            return elCount as string
+          end tell')"
+          echo "Finder window 1 AX elements (direct): ${result}"
+          if [[ ! "${result}" =~ ^[0-9]+$ ]] || [[ "${result}" -lt 5 ]]; then
+            echo "AX tree unreadable directly (got '${result}')." >&2
+            exit 1
+          fi
+
+      - name: osascript AX probe over self-SSH (M0.2)
+        shell: bash
+        run: |
+          # The money step: the gate drives the Mac over SSH, so AX must
+          # work from an SSH session, not just the job shell.
+          result="$(ssh -o BatchMode=yes -i "${HOME}/.ssh/probe-loopback" localhost \
+            "osascript -e 'tell application \"System Events\" to tell process \"Finder\" to count of entire contents of window 1'")"
+          echo "Finder window 1 AX elements (over SSH): ${result}"
+          if [[ ! "${result}" =~ ^[0-9]+$ ]] || [[ "${result}" -lt 5 ]]; then
+            echo "AX tree unreadable over SSH (got '${result}')." >&2
+            exit 1
+          fi
+
+      - name: Swift AX negative control (M0.2)
+        shell: bash
+        run: |
+          # If ad-hoc Swift AX works on hosted runners, the driver port is
+          # unnecessary. Expect failure (no TCC grant); record either way.
+          cat > "${RUNNER_TEMP}/axcheck.swift" <<'EOF'
+          import Cocoa
+          let finder = NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier == "com.apple.Finder"
+          }!
+          let el = AXUIElementCreateApplication(finder.processIdentifier)
+          var v: AnyObject?
+          let r = AXUIElementCopyAttributeValue(el, "AXWindows" as CFString, &v)
+          let wins = (r == .success ? v as? [AXUIElement] : nil) ?? []
+          print("axwindows=\(wins.count) result=\(r.rawValue)")
+          EOF
+          swiftc -o "${RUNNER_TEMP}/axcheck" "${RUNNER_TEMP}/axcheck.swift"
+          "${RUNNER_TEMP}/axcheck" || true
+          echo "(control only: nonzero/empty is the expected hosted outcome)"
