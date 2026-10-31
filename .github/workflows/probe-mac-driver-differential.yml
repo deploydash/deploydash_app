@@ -101,19 +101,105 @@ jobs:
           echo "self-SSH never came up." >&2
           exit 1
 
-      - name: Property-name diagnosis
+      - name: Label anatomy probe
         shell: bash
         run: |
+          # Round 3 showed static-text labels diverging (shim [text] vs
+          # real strings): print every candidate property for the first
+          # 3 static texts found, plus the raw `properties` record shape.
           osascript -e 'tell application "Finder" to make new Finder window'
           sleep 2
-          echo "--- description (shim first branch):"
-          osascript -e 'tell application "System Events" to tell process "Finder" to return description of every UI element of window 1' 2>&1 | head -c 400
+          echo "--- name batch (window 1 direct children):"
+          osascript -e 'tell application "System Events" to tell process "Finder" to return name of every UI element of window 1' 2>&1 | head -c 500
           echo ""
-          echo "--- accessibility description (fallback branch):"
-          osascript -e 'tell application "System Events" to tell process "Finder" to return accessibility description of every UI element of window 1' 2>&1 | head -c 400
+          echo "--- properties records (window 1 direct children):"
+          osascript -e 'tell application "System Events" to tell process "Finder" to return properties of every UI element of window 1' 2>&1 | head -c 1500
           echo ""
-          echo "--- tuple pull (the batched primitive):"
-          osascript -e 'tell application "System Events" to tell process "Finder" to return {role, title, value, position, size} of every UI element of window 1' 2>&1 | head -c 600
+          echo "--- deep static-text anatomy (first 3 found):"
+          {
+            echo 'on run arguments'
+            echo '  tell application "System Events" to set rootRef to process "Finder"'
+            echo '  set found to my findTexts(rootRef, 0, 0)'
+            echo '  return "texts-examined=" & (found as string)'
+            echo 'end run'
+            echo 'on findTexts(containerRef, depth, found)'
+            echo '  if depth > 14 then return found'
+            echo '  if found >= 3 then return found'
+            echo '  tell application "System Events"'
+            echo '    set kids to every UI element of containerRef'
+            echo '    set rolesList to role of every UI element of containerRef'
+            echo '  end tell'
+            echo '  repeat with i from 1 to count of kids'
+            echo '    if (item i of rolesList) contains "static" then'
+            echo '      my printProps(item i of kids)'
+            echo '      set found to found + 1'
+            echo '      if found >= 3 then return found'
+            echo '    end if'
+            echo '    set found to my findTexts(item i of kids, depth + 1, found)'
+            echo '    if found >= 3 then return found'
+            echo '  end repeat'
+            echo '  return found'
+            echo 'end findTexts'
+            echo 'on show(label, el, which)'
+            echo '  try'
+            echo '    tell application "System Events"'
+            echo '      if which is "title" then set v to title of el'
+            echo '      if which is "description" then set v to description of el'
+            echo '      if which is "accdesc" then set v to accessibility description of el'
+            echo '      if which is "value" then set v to value of el'
+            echo '      if which is "name" then set v to name of el'
+            echo '      if which is "roledesc" then set v to role description of el'
+            echo '    end tell'
+            echo '    if v is missing value then set v to "<missing>"'
+            echo '    log label & "=" & (v as string)'
+            echo '  on error errMsg'
+            echo '    log label & "=ERROR(" & errMsg & ")"'
+            echo '  end try'
+            echo 'end show'
+            echo 'on printProps(el)'
+            echo '  my show("TITLE", el, "title")'
+            echo '  my show("DESC", el, "description")'
+            echo '  my show("ACCDESC", el, "accdesc")'
+            echo '  my show("VALUE", el, "value")'
+            echo '  my show("NAME", el, "name")'
+            echo '  my show("ROLEDESC", el, "roledesc")'
+            echo 'end printProps'
+          } > /tmp/anatomy.scpt
+          osascript /tmp/anatomy.scpt 2>&1 | head -c 2000
+          echo ""
+
+      - name: Single-pull timing experiment
+        shell: bash
+        run: |
+          # Round 3 dumps took ~60s at 4 pulls/container. Time one pull
+          # (`properties` records) over the same tree to prove the cost
+          # is event count, not tree size.
+          {
+            echo 'on run arguments'
+            echo '  set t0 to current date'
+            echo '  tell application "System Events" to set rootRef to process "Finder"'
+            echo '  set n to my countProps(rootRef, 0)'
+            echo '  set secs to ((current date) - t0)'
+            echo '  return "elements=" & n & " secs=" & secs'
+            echo 'end run'
+            echo 'on countProps(containerRef, depth)'
+            echo '  if depth > 14 then return 0'
+            echo '  try'
+            echo '    tell application "System Events"'
+            echo '      set kids to every UI element of containerRef'
+            echo '      set recs to properties of every UI element of containerRef'
+            echo '    end tell'
+            echo '  on error'
+            echo '    return 0'
+            echo '  end try'
+            echo '  set n to count of kids'
+            echo '  repeat with k in kids'
+            echo '    set n to n + my countProps(k, depth + 1)'
+            echo '  end repeat'
+            echo '  return n'
+            echo 'end countProps'
+          } > /tmp/singlepull.scpt
+          osascript /tmp/singlepull.scpt 2>&1 | head -c 300
           echo ""
 
       - name: Run native differential over self-SSH
@@ -249,35 +335,49 @@ jobs:
             echo '"$SHIM_BIN/axpress" TextEdit "Don" >/dev/null 2>&1 || true'
             echo 'sleep 1'
             echo 'osascript -e "tell application \"TextEdit\" to quit" 2>/dev/null || true'
-            echo 'open -a TextEdit 2>/dev/null || true'
-            echo 'sleep 1'
-            echo 'osascript -e "tell application \"System Events\" to set frontmost of process \"TextEdit\" to true" >/dev/null 2>&1 || true'
-            echo 'sleep 1'
-            echo 'pos=$(osascript -e "tell application \"System Events\" to tell process \"Finder\" to return position of window 1")'
-            echo 'size=$(osascript -e "tell application \"System Events\" to tell process \"Finder\" to return size of window 1")'
-            echo 'px=$(echo "$pos" | cut -d, -f1); py=$(echo "$pos" | cut -d, -f2)'
-            echo 'sw=$(echo "$size" | cut -d, -f1); sh=$(echo "$size" | cut -d, -f2)'
-            echo 'cx=$((px + sw / 2)); cy=$((py + sh / 2))'
-            echo 'echo "click target: $cx,$cy"'
-            echo 'screencapture -x "$OUT/pre-click.png" || true'
-            echo '"$SHIM_BIN/axclick" "$cx" "$cy" > "$OUT/shim-click.txt" 2>&1; shim_rc=$?'
-            echo 'sleep 1'
-            echo 'if [ "$shim_rc" = "0" ] && [ "$(frontmost Finder)" = "true" ] && grep -q "CLICKAT-OK" "$OUT/shim-click.txt"; then'
-            echo '  echo "DIFF-OK: shim click landed"'
-            echo 'else'
-            echo '  echo "DIFF-FAIL: shim click did not land"; FAIL=1'
+            echo 'if [ "$(frontmost Finder)" != "true" ]; then'
+            echo '  osascript -e "tell application \"Finder\" to activate"'
+            echo '  sleep 2'
             echo 'fi'
+            echo 'close_target() {'
+            echo '  pos=$(osascript -e "tell application \"System Events\" to tell process \"Finder\" to return position of button 1 of window 1")'
+            echo '  size=$(osascript -e "tell application \"System Events\" to tell process \"Finder\" to return size of button 1 of window 1")'
+            echo '  px=$(echo "$pos" | cut -d, -f1); py=$(echo "$pos" | cut -d, -f2)'
+            echo '  sw=$(echo "$size" | cut -d, -f1); sh=$(echo "$size" | cut -d, -f2)'
+            echo '  cx=$((px + sw / 2)); cy=$((py + sh / 2))'
+            echo '  echo "click target (close box): $cx,$cy"'
+            echo '}'
+            echo 'screencapture -x "$OUT/pre-click.png" || true'
+            echo 'if [ "$(wincount)" = "0" ]; then'
+            echo '  osascript -e "tell application \"Finder\" to make new Finder window"'
+            echo '  sleep 2'
+            echo 'fi'
+            echo 'close_target'
+            echo 'before_click=$(wincount)'
             echo '"$SWIFT_BIN/axclick" "$cx" "$cy" > "$OUT/swift-click.txt" 2>&1; swift_rc=$?'
-            echo 'echo "swift click rc=$swift_rc : $(cat "$OUT/swift-click.txt") (recorded only)"'
-            echo 'osascript -e "tell application \"System Events\" to set frontmost of process \"TextEdit\" to true" >/dev/null 2>&1 || true'
-            echo 'sleep 1'
-            echo '"$SWIFT_BIN/axclick" "$cx" "$cy" >/dev/null 2>&1 || true'
-            echo 'sleep 1'
-            echo 'if [ "$(frontmost Finder)" = "true" ]; then'
+            echo 'sleep 2'
+            echo 'mid_click=$(wincount)'
+            echo 'echo "swift click rc=$swift_rc windows $before_click -> $mid_click (recorded only)"'
+            echo 'if [ "$mid_click" -lt "$before_click" ]; then'
             echo '  echo "DIFF-NOTE: raw CGEvent click LANDED on hosted (viability input)"'
             echo '  SWIFT_CLICK_LANDED=1'
             echo 'else'
             echo '  echo "DIFF-OK: raw CGEvent click denied as expected (port stands)"'
+            echo 'fi'
+            echo 'if [ "$(wincount)" = "0" ]; then'
+            echo '  osascript -e "tell application \"Finder\" to make new Finder window"'
+            echo '  sleep 2'
+            echo 'fi'
+            echo 'close_target'
+            echo 'before_shim=$(wincount)'
+            echo '"$SHIM_BIN/axclick" "$cx" "$cy" > "$OUT/shim-click.txt" 2>&1; shim_rc=$?'
+            echo 'sleep 2'
+            echo 'after_shim=$(wincount)'
+            echo 'echo "shim click rc=$shim_rc windows $before_shim -> $after_shim"'
+            echo 'if [ "$shim_rc" = "0" ] && [ "$after_shim" -lt "$before_shim" ] && grep -q "CLICKAT-OK" "$OUT/shim-click.txt"; then'
+            echo '  echo "DIFF-OK: shim click landed (window closed)"'
+            echo 'else'
+            echo '  echo "DIFF-FAIL: shim click did not land"; FAIL=1'
             echo 'fi'
             echo 'if osascript -e "tell application \"System Events\" to key code 53" 2> "$OUT/keystroke.err"; then'
             echo '  echo "DIFF-OK: keystroke over SSH rc=0"'
@@ -298,6 +398,7 @@ jobs:
             | tee "${RUNNER_TEMP}/diff-log.txt"
 
       - name: Run Flutter leg over self-SSH
+        if: always()
         shell: bash
         run: |
           # Installs the spike DMG and proves the REAL Flutter onboarding
