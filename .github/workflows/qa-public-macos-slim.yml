@@ -87,7 +87,7 @@ jobs:
           path: qa
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@e3d21b6c8167cbbd589c0d807efc59c2f641d9de
+        uses: astral-sh/setup-uv@v7
 
       - name: Install pinned Python for the gate
         shell: bash
