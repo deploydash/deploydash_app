@@ -1,0 +1,172 @@
+# Pivot proof on hosted macos-15 (P1.2a round 5). Dispatch-only
+# permanent diagnostic. Rounds 1-4 proved raw AX fully viable over
+# self-SSH (reads + AXPress + CGEvent click all effect-verified),
+# so the osascript port does not ship; this run proves the remaining
+# load-bearing link with the EXISTING Swift tools: gate-identical
+# install (lsregister + open by path + pgrep, mirroring
+# desk_macos_artifact_gate.install) and leg_unlock's intro assertions
+# (`Get started` present, zero TextFields) over self-SSH.
+# Pass contract:
+#   - install + spctl + launch all succeed (LAUNCH-OK lines);
+#   - Swift axdump reads a populated tree with the intro marker.
+# On failure the full tree, screenshot, and launch diagnostics upload.
+name: Mac Swift launch proof (hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      qa-ref:
+        description: deploydash_qa ref carrying the Swift tools
+        required: false
+        default: main
+      spike-run-id:
+        description: M0.1 run id whose deploydash-macos-arm64 artifact feeds the launch
+        required: false
+        default: "41157814456"
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Mask consumed secrets
+        shell: bash
+        run: |
+          echo "::add-mask::${{ secrets.QA_SUITE_DEPLOY_KEY }}"
+
+      - name: Check out Swift tools
+        uses: actions/checkout@v5
+        with:
+          repository: deploydash/deploydash_qa
+          ref: ${{ inputs.qa-ref }}
+          ssh-key: ${{ secrets.QA_SUITE_DEPLOY_KEY }}
+          path: qa-swift
+
+      - name: Download spike DMG
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download "${{ inputs.spike-run-id }}" \
+            -R deploydash/deploydash_app -n deploydash-macos-arm64 \
+            -D "${RUNNER_TEMP}/spike-dmg"
+          ls -la "${RUNNER_TEMP}/spike-dmg"
+
+      - name: Build Swift tools
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/swift-bin"
+          for tool in axdump axpress axclick; do
+            swiftc -o "${RUNNER_TEMP}/swift-bin/${tool}" \
+              "qa-swift/qa/e2e/harnesses/desktop_macos/tools/${tool}.swift"
+          done
+          ls "${RUNNER_TEMP}/swift-bin"
+
+      - name: Enable self-SSH
+        shell: bash
+        run: |
+          sudo systemsetup -setremotelogin on
+          mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
+          ssh-keygen -t ed25519 -N '' -f "${HOME}/.ssh/proof-loopback" -q
+          cat "${HOME}/.ssh/proof-loopback.pub" >> "${HOME}/.ssh/authorized_keys"
+          chmod 600 "${HOME}/.ssh/authorized_keys"
+          for i in $(seq 1 6); do
+            if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                -i "${HOME}/.ssh/proof-loopback" localhost 'echo SSH-OK' 2>/dev/null; then
+              echo "self-SSH up after ${i} tries"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "self-SSH never came up." >&2
+          exit 1
+
+      - name: Install, launch, and read intro over self-SSH
+        shell: bash
+        run: |
+          # Gate-identical install + leg_unlock assertions. Echo-built:
+          # a flush heredoc EOF breaks YAML, an indented one swallows
+          # the step, so every line is echoed (round 1 lesson).
+          {
+            echo 'set -u'
+            echo 'OUT="/tmp/swift-launch"'
+            echo 'mkdir -p "$OUT"'
+            echo 'rm -f "$OUT"/*'
+            echo 'FAIL=0'
+            echo 'DMG=$(ls "$SPIKE_DIR"/DeployDash-*.dmg | head -n 1)'
+            echo 'echo "dmg: $DMG"'
+            echo 'pkill -x "Deploy Dash" 2>/dev/null || true'
+            echo 'sleep 2'
+            echo 'rm -rf "/Applications/Deploy Dash.app"'
+            echo 'hdiutil attach "$DMG" -readonly -nobrowse -mountpoint /tmp/spike-mount'
+            echo 'cp -R /tmp/spike-mount/Deploy\\ Dash.app /Applications/'
+            echo 'hdiutil detach /tmp/spike-mount'
+            echo 'if codesign --verify --deep --strict "/Applications/Deploy Dash.app"; then'
+            echo '  echo "LAUNCH-OK: signature verifies"'
+            echo 'else'
+            echo '  echo "LAUNCH-FAIL: signature rejected"; FAIL=1'
+            echo 'fi'
+            echo 'if spctl --assess --type execute "/Applications/Deploy Dash.app" 2> "$OUT/spctl.err"; then'
+            echo '  echo "LAUNCH-OK: Gatekeeper assesses clean"'
+            echo 'else'
+            echo '  echo "LAUNCH-FAIL: spctl assess rejected"; cat "$OUT/spctl.err"; FAIL=1'
+            echo 'fi'
+            echo '/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f "/Applications/Deploy Dash.app"'
+            echo 'open "/Applications/Deploy Dash.app" 2> "$OUT/open.err"; open_rc=$?'
+            echo 'echo "open rc=$open_rc"'
+            echo 'cat "$OUT/open.err"'
+            echo 'sleep 10'
+            echo 'if pgrep -x "Deploy Dash" >/dev/null; then'
+            echo '  echo "LAUNCH-OK: process alive after open-by-path"'
+            echo 'else'
+            echo '  echo "LAUNCH-FAIL: no process after open-by-path"; FAIL=1'
+            echo '  lsappinfo info -only name -app "Deploy Dash" 2>&1 | head -c 500 || true'
+            echo '  log show --last 2m --predicate "process == \"Deploy Dash\"" 2>&1 | tail -n 20 || true'
+            echo 'fi'
+            echo 'screencapture -x "$OUT/launch.png" || true'
+            echo 'tries=0; marked=0'
+            echo 'while [ "$tries" -lt 12 ]; do'
+            echo '  start=$(date +%s)'
+            echo '  if "$SWIFT_BIN/axdump" "Deploy Dash" > "$OUT/intro.txt" 2> "$OUT/intro.err"; then'
+            echo '    secs=$(($(date +%s) - start))'
+            echo '    echo "swift dump took ${secs}s ($(wc -l < "$OUT/intro.txt") lines)"'
+            echo '    if grep -q "Get started" "$OUT/intro.txt"; then marked=1; break; fi'
+            echo '  fi'
+            echo '  tries=$((tries + 1)); sleep 5'
+            echo 'done'
+            echo 'cat "$OUT/intro.txt"'
+            echo 'if [ "$marked" = "1" ]; then'
+            echo '  echo "LAUNCH-OK: onboarding intro readable by Swift over self-SSH"'
+            echo 'else'
+            echo '  echo "LAUNCH-FAIL: no intro marker after 60s"; FAIL=1'
+            echo 'fi'
+            echo 'fields=$(grep -c "TextField" "$OUT/intro.txt" || true)'
+            echo 'echo "intro TextField count: $fields"'
+            echo 'if [ "$fields" = "0" ]; then'
+            echo '  echo "LAUNCH-OK: zero intro fields"'
+            echo 'else'
+            echo '  echo "LAUNCH-FAIL: expected 0 intro fields"; FAIL=1'
+            echo 'fi'
+            echo 'screencapture -x "$OUT/intro.png" || true'
+            echo 'pkill -x "Deploy Dash" || true'
+            echo 'echo "LAUNCH-RESULT fail=$FAIL"'
+            echo 'exit $FAIL'
+          } > /tmp/swift-launch.sh
+          bash -n /tmp/swift-launch.sh && echo "launch script syntax OK"
+          ssh -o BatchMode=yes -i "${HOME}/.ssh/proof-loopback" localhost \
+            "SPIKE_DIR=${RUNNER_TEMP}/spike-dmg SWIFT_BIN=${RUNNER_TEMP}/swift-bin bash /tmp/swift-launch.sh" \
+            | tee "${RUNNER_TEMP}/launch-log.txt"
+
+      - name: Upload launch evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-swift-launch-${{ github.run_id }}
+          path: |
+            /tmp/swift-launch/
+            ${{ runner.temp }}/launch-log.txt
+          if-no-files-found: warn
+          retention-days: 14
