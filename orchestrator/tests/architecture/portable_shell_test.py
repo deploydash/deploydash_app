@@ -74,6 +74,8 @@ _EXPECTED_NON_LINUX_WORKFLOWS = frozenset(
         "qa-public-windows-slim.yml",
         # Dispatch-only hosted-macOS AX/self-SSH probe (permanent diagnostic).
         "probe-public-macos-ax.yml",
+        # Dispatch-only Swift-vs-osascript driver differential (P1.2 proof).
+        "probe-mac-driver-differential.yml",
         # Dispatch-only Swift-over-SSH launch proof (permanent diagnostic).
         "probe-mac-swift-launch.yml",
     }
