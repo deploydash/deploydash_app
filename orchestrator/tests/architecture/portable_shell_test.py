@@ -78,6 +78,8 @@ _EXPECTED_NON_LINUX_WORKFLOWS = frozenset(
         "probe-mac-driver-differential.yml",
         # Public macOS slim QA caller (P2.1; suite stays private).
         "qa-public-macos-slim.yml",
+        # Dispatch-only Swift-over-SSH launch proof (permanent diagnostic).
+        "probe-mac-swift-launch.yml",
     }
 )
 
