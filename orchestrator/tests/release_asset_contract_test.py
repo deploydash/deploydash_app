@@ -186,9 +186,9 @@ class ReleaseAssetContractTest(unittest.TestCase):
         release = (root / ".github/workflows/release.yml").read_text()
 
         self.assertIn("Require hosted Windows slim success for this SHA", release)
-        self.assertIn('select(.name == "Windows slim QA (hosted)")', release)
+        self.assertIn('select(.name | startswith("Windows slim QA (hosted)"))', release)
         self.assertIn("Require hosted macOS slim success for this SHA", release)
-        self.assertIn('select(.name == "macOS slim QA (hosted)")', release)
+        self.assertIn('select(.name | startswith("macOS slim QA (hosted)"))', release)
         self.assertIn("refusing to publish", release)
 
 
