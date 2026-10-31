@@ -130,7 +130,27 @@ echo "Submitting DMG for notarization: ${DMG_PATH}"
 xcrun notarytool "${submit_args[@]}"
 
 echo "Stapling notarization ticket to DMG"
-xcrun stapler staple "${DMG_PATH}"
+# STAPLE-RETRY: the ticket fetch hits transient Apple CDN failures
+# (M0.1 first attempt: notarization Accepted, staple hit NSURLError
+# -1005) after notarization already succeeded — a dropped fetch must
+# not kill the release. Three attempts with backoff, fail loud after.
+staple_attempt=1
+while true; do
+  if xcrun stapler staple "${DMG_PATH}"; then
+    break
+  fi
+  if [[ "${staple_attempt}" -ge 3 ]]; then
+    echo "stapler staple failed 3 times; giving up." >&2
+    exit 1
+  fi
+  staple_backoff=30
+  if [[ "${staple_attempt}" -ge 2 ]]; then
+    staple_backoff=120
+  fi
+  echo "staple attempt ${staple_attempt} failed; retrying in ${staple_backoff}s." >&2
+  sleep "${staple_backoff}"
+  staple_attempt=$((staple_attempt + 1))
+done
 
 echo "Validating stapled DMG"
 xcrun stapler validate "${DMG_PATH}"
