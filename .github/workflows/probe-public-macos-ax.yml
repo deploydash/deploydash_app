@@ -135,19 +135,30 @@ jobs:
       - name: Swift AX negative control (M0.2)
         shell: bash
         run: |
-          # If ad-hoc Swift AX works on hosted runners, the driver port is
-          # unnecessary. Expect failure (no TCC grant); record either way.
-          cat > "${RUNNER_TEMP}/axcheck.swift" <<'EOF'
-          import Cocoa
-          let finder = NSWorkspace.shared.runningApplications.first {
-            $0.bundleIdentifier == "com.apple.Finder"
-          }!
-          let el = AXUIElementCreateApplication(finder.processIdentifier)
-          var v: AnyObject?
-          let r = AXUIElementCopyAttributeValue(el, "AXWindows" as CFString, &v)
-          let wins = (r == .success ? v as? [AXUIElement] : nil) ?? []
-          print("axwindows=\(wins.count) result=\(r.rawValue)")
-          EOF
+          # If ad-hoc Swift AX reads AND writes worked on hosted runners,
+          # the driver port would be unnecessary. Expect reads to work
+          # (AX reads need no grant) but AXPress to fail (writes need
+          # caller trust no ad-hoc binary has); record either way.
+          # (echo-built: a flush heredoc terminator breaks YAML, an
+          # indented one silently swallows the rest of the step.)
+          {
+            echo 'import Cocoa'
+            echo 'let finder = NSWorkspace.shared.runningApplications.first {'
+            echo '  $0.bundleIdentifier == "com.apple.Finder"'
+            echo '}!'
+            echo 'let el = AXUIElementCreateApplication(finder.processIdentifier)'
+            echo 'var v: AnyObject?'
+            echo 'let r = AXUIElementCopyAttributeValue(el, "AXWindows" as CFString, &v)'
+            echo 'let wins = (r == .success ? v as? [AXUIElement] : nil) ?? []'
+            echo 'print("READ axwindows=\(wins.count) result=\(r.rawValue)")'
+            echo 'var w: AnyObject?'
+            echo 'if wins.count > 0, AXUIElementCopyAttributeValue(wins[0], "AXCloseButton" as CFString, &w) == .success, let b = w {'
+            echo '  let p = AXUIElementPerformAction(b as! AXUIElement, "AXPress" as CFString)'
+            echo '  print("WRITE axpress result=\(p.rawValue)")'
+            echo '} else {'
+            echo '  print("WRITE no close button resolved")'
+            echo '}'
+          } > "${RUNNER_TEMP}/axcheck.swift"
           swiftc -o "${RUNNER_TEMP}/axcheck" "${RUNNER_TEMP}/axcheck.swift"
           "${RUNNER_TEMP}/axcheck" || true
-          echo "(control only: nonzero/empty is the expected hosted outcome)"
+          echo "(control only: WRITE failure is the expected hosted outcome)"
