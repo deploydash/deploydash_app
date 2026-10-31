@@ -84,7 +84,6 @@ jobs:
           repository: deploydash/deploydash_qa
           ref: ${{ inputs.qa-ref }}
           ssh-key: ${{ secrets.QA_SUITE_DEPLOY_KEY }}
-          path: qa
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
