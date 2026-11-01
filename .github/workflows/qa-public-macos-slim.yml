@@ -58,7 +58,10 @@ on:
         default: main
 
 permissions:
-  contents: read
+  # Write: `gh release download` of the draft DMG answers
+  # "release not found" under a read-only token; drafts require push
+  # access. Nothing in this workflow writes to the repository.
+  contents: write
 
 concurrency:
   group: qa-public-macos-slim
