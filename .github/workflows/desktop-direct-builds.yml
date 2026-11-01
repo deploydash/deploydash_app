@@ -619,4 +619,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --clobber
+          gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --clobber --repo "${GITHUB_REPOSITORY}"
