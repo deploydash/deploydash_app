@@ -193,7 +193,10 @@ jobs:
     if: needs.version.outputs.windows_only != 'true'
     needs: [version, tests, build-direct]
     permissions:
-      contents: read
+      # Write: the callee downloads the candidate from the draft
+      # release, and drafts are invisible to a read-only token
+      # ("release not found"). A callee may not exceed its caller.
+      contents: write
     uses: ./.github/workflows/qa-public-macos-slim.yml
     with:
       tag: ${{ github.ref_name }}
@@ -269,6 +272,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Read the tag run's slim-gate conclusions via the actions API.
+      actions: read
     outputs:
       tag: ${{ steps.validate.outputs.tag }}
       sha: ${{ steps.validate.outputs.sha }}
