@@ -148,6 +148,25 @@ class ReleaseAssetContractTest(unittest.TestCase):
         self.assertIn("repos/${REPO}/releases/${release_id}", script)
         self.assertIn("-F draft=false", script)
 
+    def test_publish_watch_finish_mode_completes_a_published_release(self):
+        """A tick that dies after flipping (v1.1.1) must be resumable by dispatch."""
+        root = Path(__file__).resolve().parents[2]
+        script = (root / "ui/scripts/store_publish_watch.sh").read_text()
+        workflow = (root / ".github/workflows/store-publish-watch.yml").read_text()
+
+        # Dispatch input reaches the script as --finish <tag>.
+        self.assertIn("finish_tag:", workflow)
+        self.assertIn("--finish", workflow)
+        self.assertIn('"--finish"', script)
+        # Finish reuses the one prune owner and the verified fetch path,
+        # never a second inline copy: define once, call from both paths.
+        self.assertEqual(script.count("prune_internal_assets()"), 1)
+        self.assertEqual(len(re.findall(r"prune_internal_assets ", script)), 2)
+        self.assertIn("store_fetch_web_installer.sh", script)
+        # Published releases are get-by-tag addressable, but list +
+        # select-by-tag stays the durable resolution everywhere.
+        self.assertNotIn('gh release view "${tag}"', script)
+
     def test_release_runs_hosted_windows_slim_before_qa_handoff(self):
         """The private Windows suite runs on hosted runners in the push run."""
         root = Path(__file__).resolve().parents[2]

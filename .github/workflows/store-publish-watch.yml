@@ -16,6 +16,12 @@ on:
   schedule:
     - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
+    inputs:
+      finish_tag:
+        description: Complete an already-published release (attach web installer, prune internals); empty for a normal tick
+        required: false
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -58,5 +64,10 @@ jobs:
           AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
           AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
           SELLER_ID: ${{ secrets.SELLER_ID }}
+          FINISH_TAG: ${{ inputs.finish_tag }}
         run: |
-          bash ui/scripts/store_publish_watch.sh
+          if [[ -n "${FINISH_TAG}" ]]; then
+            bash ui/scripts/store_publish_watch.sh --finish "${FINISH_TAG}"
+          else
+            bash ui/scripts/store_publish_watch.sh
+          fi

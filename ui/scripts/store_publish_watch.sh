@@ -14,6 +14,12 @@
 #
 # Required env: GH_TOKEN, AZURE_AD_TENANT_ID,
 # AZURE_AD_APPLICATION_CLIENT_ID, AZURE_AD_APPLICATION_SECRET, SELLER_ID.
+#
+# Manual completion: store_publish_watch.sh --finish <tag> attaches the
+# web installer and prunes pipeline-internal assets on an already
+# published release whose tick died after flipping the draft (v1.1.1:
+# the signer check failed post-flip, so no installer attached and no
+# prune ran). Refuses drafts: those belong to the scheduled tick.
 set -euo pipefail
 
 PRODUCT_ID="9P1GK6Z58B9T"
@@ -22,6 +28,44 @@ REPO="deploydash/deploydash_app"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/store_cli.sh
 source "${script_dir}/lib/store_cli.sh"
+
+# Published releases carry only user-facing artifacts. The pipeline
+# handoff files (.msixupload for Store submit, .build-manifest.json
+# for QA audit, SHA256SUMS) stay on the draft while the pipeline needs
+# them and leave here. Allowlist, so future pipeline files never leak
+# either. Command substitution, not process substitution: set
+# -e/pipefail cannot see a `< <(...)` failure, so a gh/jq error would
+# strip nothing and still report success.
+prune_internal_assets() { # $1 = release id, $2 = tag
+  local release_id="$1" tag="$2" assets_to_delete asset_id
+  assets_to_delete="$(gh api "repos/${REPO}/releases/${release_id}/assets?per_page=100" \
+    --paginate \
+    | jq -s 'add | .[] | select(.name | test("\\.dmg$|^DeployDash-Windows-x64\\.exe$") | not) | .id')"
+  while IFS= read -r asset_id; do
+    [[ -n "${asset_id}" ]] || continue
+    echo "${tag}: removing internal asset ${asset_id}."
+    gh api --method DELETE \
+      "repos/${REPO}/releases/assets/${asset_id}" >/dev/null
+  done <<<"${assets_to_delete}"
+}
+
+if [[ "${1:-}" == "--finish" ]]; then
+  finish_tag="${2:?usage: store_publish_watch.sh [--finish <tag>]}"
+  finish_row="$(gh api "repos/${REPO}/releases?per_page=100" --paginate \
+    | jq -s --arg tag "${finish_tag}" 'add | map(select(.tag_name == $tag)) | first // empty')"
+  [[ -n "${finish_row}" ]] || {
+    echo "no release found for tag ${finish_tag}." >&2
+    exit 1
+  }
+  if [[ "$(jq -r '.draft' <<<"${finish_row}")" == "true" ]]; then
+    echo "${finish_tag} is still a draft; the scheduled tick owns it, not --finish." >&2
+    exit 1
+  fi
+  finish_id="$(jq -r '.id' <<<"${finish_row}")"
+  bash "${script_dir}/store_fetch_web_installer.sh" "${finish_tag}"
+  prune_internal_assets "${finish_id}" "${finish_tag}"
+  exit 0
+fi
 
 drafts_json="$(gh api "repos/${REPO}/releases?per_page=100" --paginate \
   | jq -s 'add | map(select(.draft == true))')"
@@ -87,22 +131,7 @@ for row in "${marked_rows[@]}"; do
       -F draft=false \
       --raw-field body="$(cat "${body_file}")" >/dev/null
     bash "${script_dir}/store_fetch_web_installer.sh" "${tag}"
-    # Published releases carry only user-facing artifacts. The pipeline
-    # handoff files (.msixupload for Store submit, .build-manifest.json
-    # for QA audit) stay on the draft while the pipeline needs them and
-    # leave here. Allowlist, so future pipeline files never leak either.
-    # Command substitution, not process substitution: set -e/pipefail
-    # cannot see a `< <(...)` failure, so a gh/jq error would strip
-    # nothing and still report success.
-    assets_to_delete="$(gh api "repos/${REPO}/releases/${release_id}/assets?per_page=100" \
-      --paginate \
-      | jq -s 'add | .[] | select(.name | test("\\.dmg$|^DeployDash-Windows-x64\\.exe$") | not) | .id')"
-    while IFS= read -r asset_id; do
-      [[ -n "${asset_id}" ]] || continue
-      echo "${tag}: removing internal asset ${asset_id}."
-      gh api --method DELETE \
-        "repos/${REPO}/releases/assets/${asset_id}" >/dev/null
-    done <<<"${assets_to_delete}"
+    prune_internal_assets "${release_id}" "${tag}"
   elif [[ "${current_status,,}" == *"fail"* ]]; then
     echo "${tag}: submission failed (${current_status}); annotating draft." >&2
     printf '\n**Store submission failed** (status %s, %s). Fix the submission and re-run the Store Submit workflow for this tag.\n' \
