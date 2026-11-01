@@ -21,6 +21,12 @@
 #     network attacker cannot substitute it), and openssl verifies the
 #     chain at the countersignature time.
 #
+# osslsigncode is apt-installed unpinned, so its Subject rendering is
+# not a contract: v1.1.0 printed `CN=Microsoft Corporation,...` while
+# v1.1.1 printed openssl-oneline `/C=US/.../CN=Microsoft Corporation`.
+# Signer checks therefore canonicalize both spellings (canon_dn) and
+# match full DN components, never prefixes.
+#
 # Required env: GH_TOKEN. Requires: curl, osslsigncode, openssl, gh.
 set -euo pipefail
 
@@ -33,14 +39,42 @@ ASSET_NAME="DeployDash-Windows-x64.exe"
 # the pin from the new root at the intermediate's AIA CA-Issuers URL.
 MS_ROOT_SPKI_SHA256="02376d0908ac23041cc7d666d9daf192554f7fc36317aa9cb800908616b28af8"
 
-tag="${1:?usage: store_fetch_web_installer.sh <tag>}"
-work_dir="$(mktemp -d)"
-trap 'rm -rf "${work_dir}"' EXIT
-
 fail() {
   echo "store_fetch_web_installer: $*" >&2
   exit 1
 }
+
+# Canonical DN: split on either separator, trim, drop empties, sort.
+# Order- and spelling-insensitive, so oneline and RFC2253 forms of one
+# DN compare equal. Never fails: empty input yields empty output.
+canon_dn() { # $1 = DN in oneline or RFC2253 form
+  # The grep arm must not fail the pipeline on blank input: under
+  # set -e/pipefail a bare grep -v would kill main() silently instead
+  # of letting the caller fail loudly on the empty canonical form.
+  tr ',/' '\n\n' <<<"$1" \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+    | { grep -v '^$' || true; } \
+    | LC_ALL=C sort \
+    | tr '\n' ','
+}
+
+# True when a full O or CN component is exactly Microsoft Corporation.
+# Exact components only: `CN=Microsoft Corporation Evil` (which a
+# prefix match would accept) and bare OU membership both reject.
+signer_is_microsoft() { # $1 = signer subject in either DN form
+  local component
+  while IFS= read -r component; do
+    if [[ "${component}" == "O=Microsoft Corporation" || "${component}" == "CN=Microsoft Corporation" ]]; then
+      return 0
+    fi
+  done < <(tr ',/' '\n\n' <<<"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  return 1
+}
+
+main() {
+  tag="${1:?usage: store_fetch_web_installer.sh <tag>}"
+  work_dir="$(mktemp -d)"
+  trap 'rm -rf "${work_dir}"' EXIT
 
 curl --fail --silent --show-error --location \
   --output "${work_dir}/${ASSET_NAME}" "${INSTALLER_URL}"
@@ -61,7 +95,7 @@ echo "Message digest matches signed digest."
 
 signer_subject="$(awk '/Signer #0:/{found=1} found && /^[ \t]*Subject:/{sub(/^[ \t]*Subject:[ \t]*/, ""); print; exit}' <<<"${verify_out}")"
 [[ -n "${signer_subject}" ]] || fail "could not read Signer #0 subject"
-[[ "${signer_subject}" == "CN=Microsoft Corporation,"* ]] \
+signer_is_microsoft "${signer_subject}" \
   || fail "signer is not Microsoft Corporation: ${signer_subject}"
 echo "Signer: ${signer_subject}"
 
@@ -79,15 +113,18 @@ openssl pkcs7 -in "${work_dir}/sig.pem" -print_certs \
   || fail "could not list embedded certificates"
 
 # Split the bundle and locate the leaf by the signer subject above.
+# Canonical comparison: openssl prints RFC2253 here while osslsigncode
+# may print oneline above; both spellings canonicalize identically.
 rm -f "${work_dir}"/cert-*.pem
 awk "/BEGIN CERT/{n++} n > 0 {print > (\"${work_dir}/cert-\" n \".pem\")}" \
   "${work_dir}/certs.pem"
 leaf=""
 intermediates=()
+signer_canon="$(canon_dn "${signer_subject}")"
 for cert in "${work_dir}"/cert-*.pem; do
   subject="$(openssl x509 -in "${cert}" -noout -subject -nameopt RFC2253 \
     | sed 's/^subject=//')"
-  if [[ "${subject}" == "${signer_subject}" ]]; then
+  if [[ "$(canon_dn "${subject}")" == "${signer_canon}" ]]; then
     [[ -z "${leaf}" ]] || fail "signer subject matches two embedded certs"
     leaf="${cert}"
   else
@@ -159,3 +196,10 @@ gh release upload "${tag}" \
   --repo "${REPO}" \
   "${work_dir}/${ASSET_NAME}" \
   --clobber
+}
+
+# Sourcing the file defines the helpers without running the release
+# mutation, so contract tests can execute the real checks.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
