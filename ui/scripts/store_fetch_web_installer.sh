@@ -48,12 +48,11 @@ fail() {
 # Order- and spelling-insensitive, so oneline and RFC2253 forms of one
 # DN compare equal. Never fails: empty input yields empty output.
 canon_dn() { # $1 = DN in oneline or RFC2253 form
-  # The grep arm must not fail the pipeline on blank input: under
-  # set -e/pipefail a bare grep -v would kill main() silently instead
-  # of letting the caller fail loudly on the empty canonical form.
+  # sed deletes blanks instead of grep -v: sed never fails on
+  # no-match, so the pipeline stays safe under set -e/pipefail even
+  # for blank input (which canonicalizes to empty, never silently).
   tr ',/' '\n\n' <<<"$1" \
-    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
-    | { grep -v '^$' || true; } \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' \
     | LC_ALL=C sort \
     | tr '\n' ','
 }
@@ -62,13 +61,9 @@ canon_dn() { # $1 = DN in oneline or RFC2253 form
 # Exact components only: `CN=Microsoft Corporation Evil` (which a
 # prefix match would accept) and bare OU membership both reject.
 signer_is_microsoft() { # $1 = signer subject in either DN form
-  local component
-  while IFS= read -r component; do
-    if [[ "${component}" == "O=Microsoft Corporation" || "${component}" == "CN=Microsoft Corporation" ]]; then
-      return 0
-    fi
-  done < <(tr ',/' '\n\n' <<<"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-  return 1
+  local canon
+  canon=",$(canon_dn "$1")"
+  [[ "${canon}" == *",O=Microsoft Corporation,"* || "${canon}" == *",CN=Microsoft Corporation,"* ]]
 }
 
 main() {
