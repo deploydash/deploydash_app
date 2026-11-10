@@ -59,12 +59,15 @@ def _job_blocks(workflow_text: str) -> list[tuple[str, str]]:
             current = []
         elif current is not None and (line.startswith("    ") or line.strip() == ""):
             current.append(line)
-        elif current is not None and re.match(r"^[A-Za-z]", line):
-            jobs.append((name, "\n".join(current)))
-            current = None
+        elif re.match(r"^[A-Za-z]", line):
+            if current is not None:
+                jobs.append((name, "\n".join(current)))
+                current = None
             # The jobs block is over: without this, two-space keys
             # under a later top-level block (e.g. `env:`) would parse
-            # as jobs.
+            # as jobs. A comment-only stretch after `jobs:` leaves
+            # current as None, so the guard must live inside, not on
+            # the branch.
             in_jobs = False
     if current is not None:
         jobs.append((name, "\n".join(current)))
@@ -136,6 +139,19 @@ class GhReleaseRepoFlagTest(unittest.TestCase):
     def test_top_level_keys_after_jobs_are_not_jobs(self) -> None:
         text = "jobs:\n  build:\n    steps:\n      - run: echo hi\nenv:\n  OUTER:\n    INNER: 1\n"
         self.assertEqual([name for name, _ in _job_blocks(text)], ["build"])
+
+    def test_comment_only_jobs_opener_does_not_swallow_later_blocks(
+        self,
+    ) -> None:
+        text = (
+            "jobs:\n"
+            "  # no jobs defined yet\n"
+            "\n"
+            "env:\n"
+            "  OUTER:\n"
+            "    INNER: 1\n"
+        )
+        self.assertEqual(_job_blocks(text), [])
 
     def test_commented_gh_release_is_not_flagged(self) -> None:
         body = (
