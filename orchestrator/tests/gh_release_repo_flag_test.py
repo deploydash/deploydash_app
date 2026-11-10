@@ -140,17 +140,8 @@ class GhReleaseRepoFlagTest(unittest.TestCase):
         text = "jobs:\n  build:\n    steps:\n      - run: echo hi\nenv:\n  OUTER:\n    INNER: 1\n"
         self.assertEqual([name for name, _ in _job_blocks(text)], ["build"])
 
-    def test_comment_only_jobs_opener_does_not_swallow_later_blocks(
-        self,
-    ) -> None:
-        text = (
-            "jobs:\n"
-            "  # no jobs defined yet\n"
-            "\n"
-            "env:\n"
-            "  OUTER:\n"
-            "    INNER: 1\n"
-        )
+    def test_comment_only_jobs_opener_does_not_swallow_later_blocks(self) -> None:
+        text = "jobs:\n  # no jobs defined yet\n\nenv:\n  OUTER:\n    INNER: 1\n"
         self.assertEqual(_job_blocks(text), [])
 
     def test_commented_gh_release_is_not_flagged(self) -> None:
