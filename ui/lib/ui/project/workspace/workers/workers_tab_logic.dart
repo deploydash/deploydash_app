@@ -32,6 +32,8 @@ class WorkerEnvironmentParseResult {
 /// A `#` inside a value is literal: unlike dotenv there are no inline
 /// comments, so a password containing one can never be silently cut.
 /// A repeated key fails rather than picking a winner.
+final _environmentKeyRegExp = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
+
 WorkerEnvironmentParseResult parseWorkerEnvironmentVariables(String raw) {
   final variables = <String, String>{};
   final lines = raw.split('\n');
@@ -49,7 +51,7 @@ WorkerEnvironmentParseResult parseWorkerEnvironmentVariables(String raw) {
       );
     }
     final key = trimmed.substring(0, equals).trim();
-    if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(key)) {
+    if (!_environmentKeyRegExp.hasMatch(key)) {
       return WorkerEnvironmentParseResult(
         variables: variables,
         error:

@@ -804,6 +804,9 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
             );
             final environmentError = environmentParsed.error;
             final environmentCount = environmentParsed.variables.length;
+            final environmentCountNoun = environmentCount == 1
+                ? 'variable'
+                : 'variables';
 
             final nameError = name.isEmpty ? 'Worker name is required.' : null;
             final commandError = command.isEmpty
@@ -909,8 +912,7 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
                       hintText: 'DATABASE_URL=postgresql://user:pass@host/db',
                       helperText:
                           environmentError == null && environmentCount > 0
-                          ? '$environmentCount '
-                                '${environmentCount == 1 ? 'variable' : 'variables'}'
+                          ? '$environmentCount $environmentCountNoun'
                           : 'One KEY=value per line. Blank lines and lines '
                                 'starting with # are ignored.',
                       helperMaxLines: 2,

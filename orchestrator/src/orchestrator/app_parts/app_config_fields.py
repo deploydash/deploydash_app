@@ -9,6 +9,7 @@ TLS credential matrix, which is the one branch-heavy rule among them, is in
 """
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from .app_settings_schema import (
@@ -85,19 +86,36 @@ def _required_repository_host_key_policy(value: Any, field_name: str) -> str:
     return normalized
 
 
-def _optional_ssh_sha256_fingerprint(value: Any, field_name: str) -> str | None:
+def _optional_pattern_string(
+    value: Any,
+    field_name: str,
+    *,
+    pattern: re.Pattern[str],
+    expectation: str,
+    normalize: Callable[[str], str] | None = None,
+) -> str | None:
+    """Unset-or-string field whose normalised form must match a pattern."""
     if value is None:
         return None
     if not isinstance(value, str):
         raise AppConfigValidationError(f"{field_name} must be a string or null.")
     normalized = value.strip()
+    if normalize is not None:
+        normalized = normalize(normalized)
     if not normalized:
         return None
-    if not _SSH_SHA256_FINGERPRINT_RE.match(normalized):
-        raise AppConfigValidationError(
-            f"{field_name} must be an SSH SHA256 fingerprint.",
-        )
+    if not pattern.match(normalized):
+        raise AppConfigValidationError(f"{field_name} must {expectation}.")
     return normalized
+
+
+def _optional_ssh_sha256_fingerprint(value: Any, field_name: str) -> str | None:
+    return _optional_pattern_string(
+        value,
+        field_name,
+        pattern=_SSH_SHA256_FINGERPRINT_RE,
+        expectation="be an SSH SHA256 fingerprint",
+    )
 
 
 def _required_project_slug(value: Any, field_name: str) -> str:
@@ -128,17 +146,13 @@ def _required_branch(value: Any, field_name: str) -> str:
 
 
 def _optional_domain(value: Any, field_name: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise AppConfigValidationError(f"{field_name} must be a string or null.")
-
-    domain = value.strip().lower().rstrip(".")
-    if not domain:
-        return None
-    if not _FQDN_RE.match(domain):
-        raise AppConfigValidationError(f"{field_name} must be a valid FQDN.")
-    return domain
+    return _optional_pattern_string(
+        value,
+        field_name,
+        pattern=_FQDN_RE,
+        expectation="be a valid FQDN",
+        normalize=lambda text: text.lower().rstrip("."),
+    )
 
 
 def _strip_leading_www(domain: str) -> str:
@@ -516,18 +530,9 @@ def _optional_sqlite_snapshot_mounts(
 
 
 def _optional_env_key(value: Any, field_name: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise AppConfigValidationError(f"{field_name} must be a string or null.")
-    key = value.strip()
-    if not key:
-        return None
-    if not _ENV_KEY_RE.match(key):
-        raise AppConfigValidationError(
-            f"{field_name} must match [A-Za-z_][A-Za-z0-9_]*.",
-        )
-    return key
+    return _optional_pattern_string(
+        value, field_name, pattern=_ENV_KEY_RE, expectation="match [A-Za-z_][A-Za-z0-9_]*"
+    )
 
 
 def _required_sqlite_volume_name(value: Any, field_name: str) -> str:
