@@ -130,8 +130,8 @@ class TestSchedulerHelpers(unittest.TestCase):
         )
         for text in texts:
             with self.subTest(text=text):
-                self.assertIn("/bin/sh -c ", text)
-                self.assertNotIn("-lc ", text)
+                self.assertIn("/bin/sh -c", text)
+                self.assertNotIn("-lc", text)
 
     def test_service_unit_text_runs_wrapper_script(self):
         text = engine_scheduler_ops._service_unit_text(
