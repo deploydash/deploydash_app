@@ -1,7 +1,24 @@
 """Parse and assemble release runtime observability snapshots."""
 
+import hashlib
+
 from .. import server_identifiers, shell_output
 from ..container_status import container_status_from_payload, container_status_from_worker_row
+
+
+def _environment_fingerprint(environment: dict[str, str]) -> str:
+    """Hash a worker's environment for applied-state comparison.
+
+    The desktop recomputes the identical digest (see
+    `workerEnvironmentFingerprint` in worker_runtime_contract.dart), so a
+    changed environment reads as unapplied without values ever entering a
+    status payload. Canonical form: `key=value` lines for keys in byte
+    order joined by `\\n`. Keys are ASCII-only and values never contain a
+    newline (settings validation rejects them), so the form matches Dart's
+    exactly.
+    """
+    canonical = "\n".join(f"{key}={environment[key]}" for key in sorted(environment))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _parse_worker_status_lines(output_lines, project_slug):
@@ -93,8 +110,12 @@ def _build_worker_runtime_snapshot(app_config, runtime_rows):
                 "cpu_limit": worker.cpu_limit,
                 "memory_mb": worker.memory_mb,
                 "disk_mb": worker.disk_mb,
-                "database_user": worker.database_user,
-                "database_name": worker.database_name,
+                # Key names only: values may hold secrets and must
+                # never travel in status payloads or logs. The
+                # fingerprint lets the desktop detect value edits
+                # without seeing them.
+                "environment_keys": sorted(worker.environment.keys()),
+                "environment_sha256": _environment_fingerprint(worker.environment),
                 "container_name": (
                     runtime.get("container_name")
                     if isinstance(runtime, dict)

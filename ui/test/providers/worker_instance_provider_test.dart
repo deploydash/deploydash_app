@@ -61,9 +61,7 @@ void main() {
         cpuLimit: 0.75,
         memoryMb: 384,
         diskMb: 2048,
-        databaseUser: 'app_rw',
-        databaseName: 'app_db',
-        databasePassword: 'super-secret',
+        environment: {'DATABASE_URL': 'postgresql://db/one'},
       ),
     ]);
 
@@ -74,9 +72,9 @@ void main() {
     final persisted = await repository.listForProject('project-a');
     expect(persisted, hasLength(1));
     expect(persisted.single.name, 'Mailer');
-    expect(persisted.single.databaseUser, 'app_rw');
-    expect(persisted.single.databaseName, 'app_db');
-    expect(persisted.single.databasePassword, 'super-secret');
+    expect(persisted.single.environment, {
+      'DATABASE_URL': 'postgresql://db/one',
+    });
   });
 
   test('worker mapping round-trips every field (D-83)', () async {
@@ -88,10 +86,7 @@ void main() {
       cpuLimit: 2.5,
       memoryMb: 512,
       diskMb: 2048,
-      databaseUser: 'user',
-      databaseName: 'name',
-      databasePassword: 'password',
-      databaseEngine: 'postgres',
+      environment: {'DATABASE_URL': 'postgresql://db/one'},
       enabled: false,
       sortOrder: 7,
     );
@@ -111,7 +106,7 @@ void main() {
     final workers = notifier.workersForProject('project-a');
     expect(workers, hasLength(2));
 
-    // Record -> instance: all 13 fields, values and nulls alike.
+    // Record -> instance: all 10 fields, values and nulls alike.
     final full = workers.firstWhere((worker) => worker.id == 'worker-full');
     expect(full.projectId, 'project-a');
     expect(full.name, 'Full');
@@ -119,20 +114,17 @@ void main() {
     expect(full.cpuLimit, 2.5);
     expect(full.memoryMb, 512);
     expect(full.diskMb, 2048);
-    expect(full.databaseUser, 'user');
-    expect(full.databaseName, 'name');
-    expect(full.databasePassword, 'password');
-    expect(full.databaseEngine, 'postgres');
+    expect(full.environment, {'DATABASE_URL': 'postgresql://db/one'});
     expect(full.enabled, isFalse);
     expect(full.sortOrder, 7);
     final sparseWorker = workers.firstWhere(
       (worker) => worker.id == 'worker-sparse',
     );
-    expect(sparseWorker.databaseUser, isNull);
+    expect(sparseWorker.environment, isEmpty);
     expect(sparseWorker.enabled, isTrue);
     expect(sparseWorker.sortOrder, 0);
 
-    // Instance -> record: the same 13 fields back.
+    // Instance -> record: the same 10 fields back.
     await notifier.replaceProject('project-a', workers);
     final persisted = await repository.listForProject('project-a');
     expect(persisted, hasLength(2));
@@ -143,16 +135,13 @@ void main() {
     expect(roundTripped.cpuLimit, 2.5);
     expect(roundTripped.memoryMb, 512);
     expect(roundTripped.diskMb, 2048);
-    expect(roundTripped.databaseUser, 'user');
-    expect(roundTripped.databaseName, 'name');
-    expect(roundTripped.databasePassword, 'password');
-    expect(roundTripped.databaseEngine, 'postgres');
+    expect(roundTripped.environment, {'DATABASE_URL': 'postgresql://db/one'});
     expect(roundTripped.enabled, isFalse);
     expect(roundTripped.sortOrder, 7);
     final sparsePersisted = persisted.firstWhere(
       (row) => row.id == 'worker-sparse',
     );
-    expect(sparsePersisted.databaseEngine, isNull);
+    expect(sparsePersisted.environment, isEmpty);
   });
 
   test('worker mappers share one field list (D-83 structural)', () {
@@ -163,7 +152,7 @@ void main() {
       '${root.path}/ui/lib/providers/worker_instance_provider.dart',
     ).readAsStringSync();
     expect('workerFieldNames'.allMatches(source).length, 1);
-    expect(ProjectWorkerInstancesNotifier.workerFieldNames, hasLength(13));
+    expect(ProjectWorkerInstancesNotifier.workerFieldNames, hasLength(10));
   });
 }
 

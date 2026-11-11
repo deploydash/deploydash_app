@@ -516,6 +516,110 @@ class TestAppReleaseRuntime(unittest.TestCase):
         self.assertEqual(configs[0].id, "queue")
         self.assertFalse(configs[0].enabled)
 
+    def test_normalize_worker_spec_preserves_environment(self):
+        normalized = normalize_worker_spec(
+            {
+                "id": "queue",
+                "name": "Queue worker",
+                "start_command": "python worker.py",
+                "environment": {
+                    "DATABASE_URL": "postgresql://db/one",
+                    "ANOTHER_KEY": "another value",
+                },
+            }
+        )
+        assert normalized is not None
+        self.assertEqual(
+            normalized["environment"],
+            {
+                "DATABASE_URL": "postgresql://db/one",
+                "ANOTHER_KEY": "another value",
+            },
+        )
+
+    def test_normalize_worker_spec_maps_legacy_database_fields(self):
+        # Pre-environment snapshots carry database_* keys; rollback
+        # rebuilds worker containers from them, so they must keep
+        # resolving to the same DATABASE_* variables.
+        normalized = normalize_worker_spec(
+            {
+                "id": "queue",
+                "name": "Queue worker",
+                "start_command": "python worker.py",
+                "database_user": "app_rw",
+                "database_name": "app_db",
+                "database_password": "pw-123",
+            }
+        )
+        assert normalized is not None
+        self.assertEqual(
+            normalized["environment"],
+            {
+                "DATABASE_ENGINE": "postgres",
+                "DATABASE_HOST": "host.docker.internal",
+                "DATABASE_PORT": "5432",
+                "DATABASE_NAME": "app_db",
+                "DATABASE_USER": "app_rw",
+                "DATABASE_PASSWORD": "pw-123",
+            },
+        )
+
+    def test_normalize_worker_spec_keeps_legacy_custom_endpoints(self):
+        normalized = normalize_worker_spec(
+            {
+                "id": "queue",
+                "name": "Queue worker",
+                "start_command": "python worker.py",
+                "database_user": "app_rw",
+                "database_name": "app_db",
+                "database_password": "pw-123",
+                "database_engine": "Postgres",
+                "database_host": "db.internal",
+                "database_port": 5433,
+            }
+        )
+        assert normalized is not None
+        self.assertEqual(
+            normalized["environment"],
+            {
+                "DATABASE_ENGINE": "postgres",
+                "DATABASE_HOST": "db.internal",
+                "DATABASE_PORT": "5433",
+                "DATABASE_NAME": "app_db",
+                "DATABASE_USER": "app_rw",
+                "DATABASE_PASSWORD": "pw-123",
+            },
+        )
+
+    def test_normalize_worker_spec_drops_non_string_environment_entries(self):
+        normalized = normalize_worker_spec(
+            {
+                "id": "queue",
+                "name": "Queue worker",
+                "start_command": "python worker.py",
+                "environment": {
+                    "KEEP": "yes",
+                    "PORT": 5432,
+                    7: "nope",
+                },
+            }
+        )
+        assert normalized is not None
+        self.assertEqual(normalized["environment"], {"KEEP": "yes"})
+
+    def test_normalize_worker_spec_without_any_environment_is_empty(self):
+        normalized = normalize_worker_spec(
+            {
+                "id": "queue",
+                "name": "Queue worker",
+                "start_command": "python worker.py",
+                "environment": ["not-an-object"],
+                "database_user": "app_rw",
+            }
+        )
+        assert normalized is not None
+        self.assertEqual(normalized["environment"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

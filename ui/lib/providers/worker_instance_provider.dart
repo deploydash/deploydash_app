@@ -3,8 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/local/worker_instance_repository.dart';
 
 class ProjectWorkerInstance {
-  static const Object noChange = Object();
-
   const ProjectWorkerInstance({
     required this.id,
     required this.projectId,
@@ -13,10 +11,7 @@ class ProjectWorkerInstance {
     this.cpuLimit = 0.5,
     this.memoryMb = 256,
     this.diskMb = 1024,
-    this.databaseUser,
-    this.databaseName,
-    this.databasePassword,
-    this.databaseEngine,
+    this.environment = const <String, String>{},
     this.enabled = true,
     this.sortOrder = 0,
   });
@@ -28,10 +23,10 @@ class ProjectWorkerInstance {
   final double cpuLimit;
   final int memoryMb;
   final int diskMb;
-  final String? databaseUser;
-  final String? databaseName;
-  final String? databasePassword;
-  final String? databaseEngine;
+
+  /// Extra variables injected into the worker container, insertion-ordered.
+  /// Empty means none.
+  final Map<String, String> environment;
   final bool enabled;
   final int sortOrder;
 
@@ -43,10 +38,7 @@ class ProjectWorkerInstance {
     double? cpuLimit,
     int? memoryMb,
     int? diskMb,
-    Object? databaseUser = noChange,
-    Object? databaseName = noChange,
-    Object? databasePassword = noChange,
-    Object? databaseEngine = noChange,
+    Map<String, String>? environment,
     bool? enabled,
     int? sortOrder,
   }) {
@@ -58,18 +50,7 @@ class ProjectWorkerInstance {
       cpuLimit: cpuLimit ?? this.cpuLimit,
       memoryMb: memoryMb ?? this.memoryMb,
       diskMb: diskMb ?? this.diskMb,
-      databaseUser: identical(databaseUser, noChange)
-          ? this.databaseUser
-          : databaseUser as String?,
-      databaseName: identical(databaseName, noChange)
-          ? this.databaseName
-          : databaseName as String?,
-      databasePassword: identical(databasePassword, noChange)
-          ? this.databasePassword
-          : databasePassword as String?,
-      databaseEngine: identical(databaseEngine, noChange)
-          ? this.databaseEngine
-          : databaseEngine as String?,
+      environment: environment ?? this.environment,
       enabled: enabled ?? this.enabled,
       sortOrder: sortOrder ?? this.sortOrder,
     );
@@ -166,10 +147,7 @@ class ProjectWorkerInstancesNotifier
     'cpuLimit',
     'memoryMb',
     'diskMb',
-    'databaseUser',
-    'databaseName',
-    'databasePassword',
-    'databaseEngine',
+    'environment',
     'enabled',
     'sortOrder',
   ];
@@ -183,10 +161,7 @@ class ProjectWorkerInstancesNotifier
       cpuLimit: record.cpuLimit,
       memoryMb: record.memoryMb,
       diskMb: record.diskMb,
-      databaseUser: record.databaseUser,
-      databaseName: record.databaseName,
-      databasePassword: record.databasePassword,
-      databaseEngine: record.databaseEngine,
+      environment: Map<String, String>.of(record.environment),
       enabled: record.enabled,
       sortOrder: record.sortOrder,
     );
@@ -201,10 +176,7 @@ class ProjectWorkerInstancesNotifier
       cpuLimit: worker.cpuLimit,
       memoryMb: worker.memoryMb,
       diskMb: worker.diskMb,
-      databaseUser: worker.databaseUser,
-      databaseName: worker.databaseName,
-      databasePassword: worker.databasePassword,
-      databaseEngine: worker.databaseEngine,
+      environment: Map<String, String>.of(worker.environment),
       enabled: worker.enabled,
       sortOrder: worker.sortOrder,
     );

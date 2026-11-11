@@ -10,31 +10,88 @@ import '../../../../providers/worker_instance_provider.dart';
 /// public here for the same reason the file exists: so a test can construct
 /// one and assert on it.
 
-class WorkerDatabaseUser {
-  const WorkerDatabaseUser({
-    required this.engine,
-    required this.username,
-    required this.database,
-    required this.accessMode,
+/// The parsed content of the worker environment box: the valid entries
+/// before the first problem, plus that problem described with its line
+/// number (null when the whole box parses).
+class WorkerEnvironmentParseResult {
+  const WorkerEnvironmentParseResult({
+    required this.variables,
+    required this.error,
   });
 
-  final String engine;
-  final String username;
-  final String database;
-  final String accessMode;
-
-  String get key => '$engine::$username::$database';
-
-  String get accessLabel =>
-      accessMode == 'read_only' ? 'Read only' : 'Read and write';
-
-  String get engineLabel => 'PostgreSQL';
+  final Map<String, String> variables;
+  final String? error;
 }
 
-class WorkerDatabaseDiscoveryResult {
-  const WorkerDatabaseDiscoveryResult({required this.users});
+/// Parses one `KEY=VALUE` per line into an insertion-ordered map.
+///
+/// Blank lines and full-line `#` comments are ignored. Keys must look
+/// like `DATABASE_URL` (letters, digits, underscores, never starting
+/// with a digit); values keep everything after the first `=` verbatim
+/// except surrounding whitespace and one pair of matching outer quotes.
+/// A `#` inside a value is literal: unlike dotenv there are no inline
+/// comments, so a password containing one can never be silently cut.
+/// A repeated key fails rather than picking a winner.
+WorkerEnvironmentParseResult parseWorkerEnvironmentVariables(String raw) {
+  final variables = <String, String>{};
+  final lines = raw.split('\n');
+  for (var index = 0; index < lines.length; index++) {
+    final lineNumber = index + 1;
+    final trimmed = lines[index].trim();
+    if (trimmed.isEmpty || trimmed.startsWith('#')) {
+      continue;
+    }
+    final equals = trimmed.indexOf('=');
+    if (equals < 0) {
+      return WorkerEnvironmentParseResult(
+        variables: variables,
+        error: 'Line $lineNumber: write KEY=value (one variable per line).',
+      );
+    }
+    final key = trimmed.substring(0, equals).trim();
+    if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(key)) {
+      return WorkerEnvironmentParseResult(
+        variables: variables,
+        error:
+            'Line $lineNumber: ‘$key’ is not a valid variable name '
+            '(letters, digits and underscores; must not start with a digit).',
+      );
+    }
+    if (variables.containsKey(key)) {
+      return WorkerEnvironmentParseResult(
+        variables: variables,
+        error: 'Line $lineNumber: ‘$key’ is set twice.',
+      );
+    }
+    var value = trimmed.substring(equals + 1).trim();
+    if (value.length >= 2 &&
+        (value.startsWith("'") && value.endsWith("'") ||
+            value.startsWith('"') && value.endsWith('"'))) {
+      value = value.substring(1, value.length - 1);
+    }
+    variables[key] = value;
+  }
+  return WorkerEnvironmentParseResult(variables: variables, error: null);
+}
 
-  final List<WorkerDatabaseUser> users;
+/// Renders an environment map back to editor text, round-tripping exactly.
+///
+/// Values that would change under [parseWorkerEnvironmentVariables] -- padded
+/// with whitespace, or wrapped in literal quote characters -- are wrapped in
+/// double quotes, which the parser strips as its one pair.
+String renderWorkerEnvironment(Map<String, String> environment) {
+  return environment.entries
+      .map((entry) {
+        final value = entry.value;
+        final padded = value.trim() != value;
+        final quoted =
+            value.length >= 2 &&
+            ((value.startsWith("'") && value.endsWith("'")) ||
+                (value.startsWith('"') && value.endsWith('"')));
+        final rendered = padded || quoted ? '"$value"' : value;
+        return '${entry.key}=$rendered';
+      })
+      .join('\n');
 }
 
 class WorkerDraft {
@@ -45,10 +102,7 @@ class WorkerDraft {
     required this.cpuLimit,
     required this.memoryMb,
     required this.diskMb,
-    this.databaseUser,
-    this.databaseName,
-    this.databasePassword,
-    this.databaseEngine,
+    this.environment = const <String, String>{},
     this.enabled = true,
   });
 
@@ -58,10 +112,10 @@ class WorkerDraft {
   final double cpuLimit;
   final int memoryMb;
   final int diskMb;
-  final String? databaseUser;
-  final String? databaseName;
-  final String? databasePassword;
-  final String? databaseEngine;
+
+  /// Extra variables injected into the worker container (`KEY=VALUE` from
+  /// the editor, insertion-ordered). Empty means none.
+  final Map<String, String> environment;
   final bool enabled;
 
   WorkerDraft copyWith({
@@ -71,10 +125,7 @@ class WorkerDraft {
     double? cpuLimit,
     int? memoryMb,
     int? diskMb,
-    Object? databaseUser = ProjectWorkerInstance.noChange,
-    Object? databaseName = ProjectWorkerInstance.noChange,
-    Object? databasePassword = ProjectWorkerInstance.noChange,
-    Object? databaseEngine = ProjectWorkerInstance.noChange,
+    Map<String, String>? environment,
     required bool enabled,
   }) {
     return WorkerDraft(
@@ -84,19 +135,7 @@ class WorkerDraft {
       cpuLimit: cpuLimit ?? this.cpuLimit,
       memoryMb: memoryMb ?? this.memoryMb,
       diskMb: diskMb ?? this.diskMb,
-      databaseUser: identical(databaseUser, ProjectWorkerInstance.noChange)
-          ? this.databaseUser
-          : databaseUser as String?,
-      databaseName: identical(databaseName, ProjectWorkerInstance.noChange)
-          ? this.databaseName
-          : databaseName as String?,
-      databasePassword:
-          identical(databasePassword, ProjectWorkerInstance.noChange)
-          ? this.databasePassword
-          : databasePassword as String?,
-      databaseEngine: identical(databaseEngine, ProjectWorkerInstance.noChange)
-          ? this.databaseEngine
-          : databaseEngine as String?,
+      environment: environment ?? this.environment,
       enabled: enabled,
     );
   }
@@ -113,10 +152,7 @@ class WorkerDraft {
       cpuLimit: cpuLimit,
       memoryMb: memoryMb,
       diskMb: diskMb,
-      databaseUser: databaseUser,
-      databaseName: databaseName,
-      databasePassword: databasePassword,
-      databaseEngine: databaseEngine,
+      environment: Map<String, String>.of(environment),
       enabled: enabled,
       sortOrder: sortOrder,
     );
@@ -130,10 +166,7 @@ class WorkerDraft {
       cpuLimit: worker.cpuLimit,
       memoryMb: worker.memoryMb,
       diskMb: worker.diskMb,
-      databaseUser: worker.databaseUser,
-      databaseName: worker.databaseName,
-      databasePassword: worker.databasePassword,
-      databaseEngine: worker.databaseEngine,
+      environment: Map<String, String>.of(worker.environment),
       enabled: worker.enabled,
     );
   }

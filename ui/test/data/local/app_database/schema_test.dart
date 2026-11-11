@@ -25,7 +25,7 @@ void main() {
       // constant: reading the constant would make the test agree with
       // whatever the code says, which is exactly the check it is supposed to
       // be performing.
-      expect(database.schemaVersion, 2);
+      expect(database.schemaVersion, 3);
       expect(database.migration, isNotNull);
     }, skip: !sqliteAvailable);
 
@@ -66,9 +66,9 @@ void main() {
         }
       });
 
-      // Phase 1: full schema with one server row, then strip the v2 column
-      // and re-stamp as v1: the closest faithful stand-in for a real v1
-      // file, which predates early saves entirely.
+      // Phase 1: full schema with one server row, then strip the v2 and v3
+      // columns and re-stamp as v1: the closest faithful stand-in for a
+      // real v1 file, which predates early saves entirely.
       var migrated = AppDatabase.forTesting(NativeDatabase(file));
       await migrated
           .into(migrated.servers)
@@ -83,10 +83,13 @@ void main() {
       await migrated.customStatement(
         'ALTER TABLE servers DROP COLUMN setup_complete',
       );
+      await migrated.customStatement(
+        'ALTER TABLE worker_instances DROP COLUMN environment_json',
+      );
       await migrated.customStatement('PRAGMA user_version = 1');
       await migrated.close();
 
-      // Phase 2: reopen; drift must upgrade 1 to 2 and backfill the row.
+      // Phase 2: reopen; drift must upgrade 1 through 3 and backfill the row.
       migrated = AppDatabase.forTesting(NativeDatabase(file));
       addTearDown(migrated.close);
       final rows = await migrated.select(migrated.servers).get();
@@ -96,8 +99,98 @@ void main() {
 
       expect(rows, hasLength(1));
       expect(rows.single.setupComplete, isTrue);
-      expect(versionRow.read<int>('user_version'), 2);
+      expect(versionRow.read<int>('user_version'), 3);
     }, skip: !sqliteAvailable);
+
+    test(
+      'v2 to v3 migration converts worker database columns to environment entries',
+      () async {
+        final file = File(
+          '${Directory.systemTemp.path}/deploydash-migration-v2v3-'
+          '${DateTime.now().microsecondsSinceEpoch}.db',
+        );
+        addTearDown(() async {
+          if (await file.exists()) {
+            await file.delete();
+          }
+        });
+
+        // Phase 1: full schema with legacy worker credentials, then strip
+        // the v3 column and re-stamp as v2: the closest faithful stand-in
+        // for a real v2 file.
+        var migrated = AppDatabase.forTesting(NativeDatabase(file));
+        await migrated
+            .into(migrated.workerInstances)
+            .insert(
+              WorkerInstancesCompanion.insert(
+                id: 'queue-worker',
+                projectId: 'project-a',
+                name: 'Queue worker',
+                startCommand: 'npm run worker:queue',
+                databaseUser: const Value('app_rw'),
+                databaseName: const Value('app_db'),
+                databasePassword: const Value('pw-123'),
+                databaseEngine: const Value('postgres'),
+              ),
+            );
+        await migrated
+            .into(migrated.workerInstances)
+            .insert(
+              WorkerInstancesCompanion.insert(
+                id: 'partial-worker',
+                projectId: 'project-a',
+                name: 'Partial worker',
+                startCommand: 'npm run worker:partial',
+                databaseUser: const Value('app_rw'),
+              ),
+            );
+        await migrated
+            .into(migrated.workerInstances)
+            .insert(
+              WorkerInstancesCompanion.insert(
+                id: 'plain-worker',
+                projectId: 'project-a',
+                name: 'Plain worker',
+                startCommand: 'npm run worker:plain',
+              ),
+            );
+        await migrated.customStatement(
+          'ALTER TABLE worker_instances DROP COLUMN environment_json',
+        );
+        await migrated.customStatement('PRAGMA user_version = 2');
+        await migrated.close();
+
+        // Phase 2: reopen; drift must upgrade 2 to 3, convert the complete
+        // credential to DATABASE_* entries, and null every legacy column.
+        migrated = AppDatabase.forTesting(NativeDatabase(file));
+        addTearDown(migrated.close);
+        final rows = await migrated.select(migrated.workerInstances).get();
+        final versionRow = await migrated
+            .customSelect('PRAGMA user_version')
+            .getSingle();
+
+        expect(versionRow.read<int>('user_version'), 3);
+        final byId = {for (final row in rows) row.id: row};
+        expect(jsonDecode(byId['queue-worker']!.environmentJson!), {
+          'DATABASE_ENGINE': 'postgres',
+          'DATABASE_HOST': 'host.docker.internal',
+          'DATABASE_PORT': '5432',
+          'DATABASE_NAME': 'app_db',
+          'DATABASE_USER': 'app_rw',
+          'DATABASE_PASSWORD': 'pw-123',
+        });
+        expect(byId['queue-worker']!.databaseUser, isNull);
+        expect(byId['queue-worker']!.databaseName, isNull);
+        expect(byId['queue-worker']!.databasePassword, isNull);
+        expect(byId['queue-worker']!.databaseEngine, isNull);
+        // Partial credentials never produced variables; the columns still
+        // clear so no password lingers where nothing reads it.
+        expect(byId['partial-worker']!.environmentJson, isNull);
+        expect(byId['partial-worker']!.databaseUser, isNull);
+        expect(byId['plain-worker']!.environmentJson, isNull);
+      },
+      skip: !sqliteAvailable,
+    );
 
     test('recent schema columns are exposed on table definitions', () {
       expect(database.servers.setupComplete.$name, 'setup_complete');
@@ -155,6 +248,10 @@ void main() {
       expect(
         database.projectManagedOperationJournal.resultJson.$name,
         'result_json',
+      );
+      expect(
+        database.workerInstances.environmentJson.$name,
+        'environment_json',
       );
       expect(
         database.projectDeletionRecoveryStates.stepStatesJson.$name,

@@ -12,7 +12,7 @@ void main() {
   ProjectWorkerInstance worker({
     String id = 'queue',
     bool enabled = true,
-    String? databaseUser = 'queue_rw',
+    Map<String, String>? environment,
   }) {
     return ProjectWorkerInstance(
       id: id,
@@ -22,10 +22,12 @@ void main() {
       cpuLimit: 0.5,
       memoryMb: 512,
       diskMb: 1024,
-      databaseUser: databaseUser,
-      databaseName: 'blog',
-      databasePassword: 'secret',
-      databaseEngine: 'postgres',
+      environment:
+          environment ??
+          const {
+            'DATABASE_URL': 'postgresql://db/one',
+            'ANOTHER_KEY': 'another value',
+          },
       enabled: enabled,
       sortOrder: 3,
     );
@@ -45,28 +47,20 @@ void main() {
       expect(restored.cpuLimit, original.cpuLimit);
       expect(restored.memoryMb, original.memoryMb);
       expect(restored.diskMb, original.diskMb);
-      expect(restored.databaseUser, original.databaseUser);
-      expect(restored.databaseName, original.databaseName);
-      expect(restored.databasePassword, original.databasePassword);
-      expect(restored.databaseEngine, original.databaseEngine);
+      expect(restored.environment, original.environment);
       expect(restored.enabled, original.enabled);
       expect(restored.sortOrder, 3);
     });
 
-    test('copyWith distinguishes "leave alone" from "set to null"', () {
+    test('copyWith replaces the environment only when passed', () {
       final draft = WorkerDraft.fromWorker(worker());
 
-      // Omitted: the sentinel default means keep what is there.
-      expect(draft.copyWith(enabled: true).databaseUser, 'queue_rw');
-      // Passed explicitly as null: detach the worker from its database user.
+      expect(draft.copyWith(enabled: true).environment, draft.environment);
       expect(
-        draft.copyWith(databaseUser: null, enabled: true).databaseUser,
-        isNull,
-      );
-      // Everything else survives the detach.
-      expect(
-        draft.copyWith(databaseUser: null, enabled: true).databaseName,
-        'blog',
+        draft
+            .copyWith(environment: const {'FRESH': '1'}, enabled: true)
+            .environment,
+        {'FRESH': '1'},
       );
     });
 
@@ -81,73 +75,99 @@ void main() {
     );
   });
 
-  group('WorkerDatabaseUser', () {
-    test('keys on engine, user and database together', () {
-      const user = WorkerDatabaseUser(
-        engine: 'postgres',
-        username: 'queue_rw',
-        database: 'blog',
-        accessMode: 'read_write',
-      );
-      const sameUserOtherDatabase = WorkerDatabaseUser(
-        engine: 'postgres',
-        username: 'queue_rw',
-        database: 'analytics',
-        accessMode: 'read_write',
-      );
+  group('parseWorkerEnvironmentVariables', () {
+    test('parses one KEY=VALUE per line', () {
+      const raw =
+          'DATABASE_URL=postgresql://db/one\nANOTHER_KEY=another value\n';
 
-      expect(user.key, 'postgres::queue_rw::blog');
-      expect(user.key, isNot(sameUserOtherDatabase.key));
+      final result = parseWorkerEnvironmentVariables(raw);
+
+      expect(result.error, isNull);
+      expect(result.variables, {
+        'DATABASE_URL': 'postgresql://db/one',
+        'ANOTHER_KEY': 'another value',
+      });
     });
 
-    test('is built at runtime from a discovery result', () {
-      // Constructed non-const on purpose: these come back from a live
-      // PostgreSQL user query, one per row, not from a literal.
-      final rows = <Map<String, String>>[
-        <String, String>{
-          'user': 'queue_rw',
-          'db': 'blog',
-          'mode': 'read_write',
-        },
-        <String, String>{'user': 'queue_ro', 'db': 'blog', 'mode': 'read_only'},
-      ];
-      final discovered = WorkerDatabaseDiscoveryResult(
-        users: <WorkerDatabaseUser>[
-          for (final row in rows)
-            WorkerDatabaseUser(
-              engine: 'postgres',
-              username: row['user']!,
-              database: row['db']!,
-              accessMode: row['mode']!,
-            ),
-        ],
-      );
+    test('ignores blank lines and full-line comments', () {
+      const raw = '\n  \n# connection string\nDATABASE_URL=x\n';
 
-      expect(discovered.users, hasLength(2));
-      expect(discovered.users.map((user) => user.key), <String>[
-        'postgres::queue_rw::blog',
-        'postgres::queue_ro::blog',
-      ]);
-      expect(discovered.users.last.accessLabel, 'Read only');
+      final result = parseWorkerEnvironmentVariables(raw);
+
+      expect(result.error, isNull);
+      expect(result.variables, {'DATABASE_URL': 'x'});
     });
 
-    test('labels access mode in plain English', () {
-      const readOnly = WorkerDatabaseUser(
-        engine: 'postgres',
-        username: 'queue_ro',
-        database: 'blog',
-        accessMode: 'read_only',
-      );
-      const readWrite = WorkerDatabaseUser(
-        engine: 'postgres',
-        username: 'queue_rw',
-        database: 'blog',
-        accessMode: 'read_write',
-      );
+    test('trims padding and strips one pair of matching quotes', () {
+      const raw =
+          '  PADDED  =  spaced out  \n'
+          'SINGLE=\'quoted\'\n'
+          'DOUBLE="quoted"\n';
 
-      expect(readOnly.accessLabel, 'Read only');
-      expect(readWrite.accessLabel, 'Read and write');
-      expect(readOnly.engineLabel, 'PostgreSQL');
+      final result = parseWorkerEnvironmentVariables(raw);
+
+      expect(result.error, isNull);
+      expect(result.variables, {
+        'PADDED': 'spaced out',
+        'SINGLE': 'quoted',
+        'DOUBLE': 'quoted',
+      });
+    });
+
+    test('keeps hashes and extra equals inside values literally', () {
+      const raw = 'PASSWORD=abc#123\nCOMPLEX=a=b=c\n';
+
+      final result = parseWorkerEnvironmentVariables(raw);
+
+      expect(result.error, isNull);
+      expect(result.variables, {'PASSWORD': 'abc#123', 'COMPLEX': 'a=b=c'});
+    });
+
+    test('an empty box parses to no variables', () {
+      final result = parseWorkerEnvironmentVariables('  \n# nothing\n');
+
+      expect(result.error, isNull);
+      expect(result.variables, isEmpty);
+    });
+
+    test('a line without an equals sign fails naming its line', () {
+      final result = parseWorkerEnvironmentVariables('GOOD=1\nJUST_A_KEY\n');
+
+      expect(result.error, contains('Line 2'));
+      expect(result.variables, {'GOOD': '1'});
+    });
+
+    test('an invalid key fails naming its line and key', () {
+      for (final bad in ['9LIVES=x', 'HAS-DASH=x', '=x']) {
+        final result = parseWorkerEnvironmentVariables('$bad\n');
+
+        expect(result.error, contains('Line 1'), reason: bad);
+      }
+      final digitStart = parseWorkerEnvironmentVariables('9LIVES=x\n');
+
+      expect(digitStart.error, contains('9LIVES'));
+    });
+
+    test('a repeated key fails naming its line and key', () {
+      final result = parseWorkerEnvironmentVariables('KEY=one\nKEY=two\n');
+
+      expect(result.error, contains('Line 2'));
+      expect(result.error, contains('KEY'));
+    });
+
+    test('rendered variables re-parse to the same map', () {
+      const variables = {
+        'DATABASE_URL': 'postgresql://db/one',
+        'PADDED': '  spaced out  ',
+        'QUOTED': '"literal quotes"',
+        'EMPTY': '',
+      };
+
+      final rendered = renderWorkerEnvironment(variables);
+      final reparsed = parseWorkerEnvironmentVariables(rendered);
+
+      expect(reparsed.error, isNull);
+      expect(reparsed.variables, variables);
     });
   });
 

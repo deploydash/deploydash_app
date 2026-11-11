@@ -214,6 +214,7 @@ void touchAllColumnGetters(AppDatabase database) {
     workers.databaseUser,
     workers.databaseName,
     workers.databasePassword,
+    workers.environmentJson,
     workers.enabled,
     workers.sortOrder,
     workers.createdAt,

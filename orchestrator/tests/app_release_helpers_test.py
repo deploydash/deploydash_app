@@ -7,6 +7,7 @@ same seams as the production code. Fixtures and the base case are in
 
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -293,6 +294,13 @@ class TestReleaseHelpers(AppReleaseFlowTestCase):
         )
 
         self.assertEqual(snapshot["configured"][0]["runtime"]["state"], "running")
+        self.assertEqual(snapshot["configured"][0]["environment_keys"], [])
+        self.assertEqual(
+            snapshot["configured"][0]["environment_sha256"],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        )
+        self.assertNotIn("environment", snapshot["configured"][0])
+        self.assertNotIn("database_password", snapshot["configured"][0])
         self.assertEqual(
             [row["container_name"] for row in snapshot["orphans"]],
             [
@@ -300,6 +308,42 @@ class TestReleaseHelpers(AppReleaseFlowTestCase):
                 "deploydash_worker_remix-blog_unknown",
             ],
         )
+
+    def test_worker_snapshot_fingerprint_matches_desktop_digest(self):
+        config = parse_app_config(
+            {
+                "settings": {
+                    "project_slug": "remix-blog",
+                    "workers": [
+                        {
+                            "id": "queue",
+                            "name": "Queue worker",
+                            "start_cmd": "python worker.py",
+                            "cpu_limit": 0.5,
+                            "memory_mb": 256,
+                            "disk_mb": 1024,
+                            "environment": {
+                                "DATABASE_URL": "postgresql://db/one",
+                                "ANOTHER_KEY": "another value",
+                            },
+                        }
+                    ],
+                }
+            },
+            require_domain=False,
+        )
+        snapshot = engine_app_ops._build_worker_runtime_snapshot(config, [])
+
+        # Pinned on both sides: the desktop recomputes this same literal.
+        # Values must not appear anywhere in the row.
+        row = snapshot["configured"][0]
+        self.assertEqual(row["environment_keys"], ["ANOTHER_KEY", "DATABASE_URL"])
+        self.assertEqual(
+            row["environment_sha256"],
+            "f6e3eb4119824e891c0d2400c6fe70a6d70ed08717be466167aabf4dc0f4108d",
+        )
+        self.assertNotIn("postgresql://db/one", json.dumps(row))
+        self.assertNotIn("another value", json.dumps(row))
 
     def test_build_release_run_command_injects_runtime_env_via_stdin(self):
         runtime = engine_app_ops._build_release_run_command(

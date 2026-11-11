@@ -34,9 +34,10 @@ void main() {
             cpuLimit: 2.0,
             memoryMb: 1024,
             diskMb: 4096,
-            databaseUser: 'app_rw',
-            databaseName: 'app_db',
-            databasePassword: 'secret-123',
+            environment: const {
+              'DATABASE_URL': 'postgresql://db/one',
+              'ANOTHER_KEY': 'another value',
+            },
             enabled: true,
             sortOrder: 0,
           ),
@@ -116,11 +117,10 @@ void main() {
       expect(payload['cpu_limit'], 2.0);
       expect(payload['memory_mb'], 1024);
       expect(payload['disk_mb'], 4096);
-      expect(payload['database_user'], 'app_rw');
-      expect(payload['database_name'], 'app_db');
-      expect(payload['database_password'], 'secret-123');
-      expect(payload['database_host'], 'host.docker.internal');
-      expect(payload['database_port'], 5432);
+      expect(payload['environment'], {
+        'DATABASE_URL': 'postgresql://db/one',
+        'ANOTHER_KEY': 'another value',
+      });
 
       final row = find.byKey(const Key('worker-row-queue-worker'));
       expect(

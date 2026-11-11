@@ -122,9 +122,9 @@ void main() {
             cpuLimit: 2.0,
             memoryMb: 1024,
             diskMb: 4096,
-            databaseUser: 'app_rw',
-            databaseName: 'app_db',
-            databasePassword: 'secret-123',
+            environment: const {
+              'DATABASE_URL': 'postgresql://app_rw@db/app_db',
+            },
             enabled: true,
             sortOrder: 0,
           ),

@@ -158,13 +158,58 @@ def normalize_worker_spec(worker_spec: Any) -> dict[str, Any] | None:
         "memory_mb": int(worker_spec.get("memory_mb") or 256),
         "disk_mb": int(worker_spec.get("disk_mb") or 1024),
         "enabled": bool(worker_spec.get("enabled", True)),
-        "database_user": worker_spec.get("database_user"),
-        "database_name": worker_spec.get("database_name"),
-        "database_password": worker_spec.get("database_password"),
-        "database_engine": worker_spec.get("database_engine"),
-        "database_host": worker_spec.get("database_host"),
-        "database_port": worker_spec.get("database_port"),
+        "environment": _normalize_worker_environment(worker_spec),
     }
+
+
+def _normalize_worker_environment(worker_spec: dict[str, Any]) -> dict[str, str]:
+    """Resolve a snapshot worker's environment, including legacy keys.
+
+    Snapshots written before the environment map carry database_*
+    fields instead. Rollback rebuilds worker containers from those
+    snapshots, so they map to the same DATABASE_* variables (with the
+    same defaults) rather than silently losing database access. New
+    snapshots only ever carry `environment`.
+    """
+    environment = worker_spec.get("environment")
+    if isinstance(environment, dict):
+        return {
+            str(key): str(value)
+            for key, value in environment.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+    user = worker_spec.get("database_user")
+    name = worker_spec.get("database_name")
+    password = worker_spec.get("database_password")
+    if (
+        isinstance(user, str)
+        and user.strip()
+        and isinstance(name, str)
+        and name.strip()
+        and isinstance(password, str)
+        and password.strip()
+    ):
+        engine = worker_spec.get("database_engine")
+        host = worker_spec.get("database_host")
+        port = worker_spec.get("database_port")
+        # Old snapshots always carry engine/host/port fully populated
+        # (the old settings parser defaulted them); the fallbacks below
+        # only guard hand-edited manifests.
+        return {
+            "DATABASE_ENGINE": (
+                engine.strip().lower() if isinstance(engine, str) and engine.strip() else "postgres"
+            ),
+            "DATABASE_HOST": (
+                host.strip() if isinstance(host, str) and host.strip() else "host.docker.internal"
+            ),
+            "DATABASE_PORT": (
+                str(port) if isinstance(port, int) and not isinstance(port, bool) else "5432"
+            ),
+            "DATABASE_NAME": name.strip(),
+            "DATABASE_USER": user.strip(),
+            "DATABASE_PASSWORD": password.strip(),
+        }
+    return {}
 
 
 def release_entry_from_config(
@@ -409,12 +454,7 @@ def worker_specs_to_configs(worker_specs: list[dict[str, Any]]) -> list[WorkerCo
                 memory_mb=normalized["memory_mb"],
                 disk_mb=normalized["disk_mb"],
                 enabled=normalized["enabled"],
-                database_user=normalized["database_user"],
-                database_name=normalized["database_name"],
-                database_password=normalized["database_password"],
-                database_engine=normalized["database_engine"],
-                database_host=normalized["database_host"],
-                database_port=normalized["database_port"],
+                environment=normalized["environment"],
             )
         )
     return configs

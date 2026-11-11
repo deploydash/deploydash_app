@@ -22,7 +22,6 @@ from .app_settings_schema import (
     _SLUG_RE,
     _SSH_SHA256_FINGERPRINT_RE,
     _TLS_PROVIDERS,
-    _WORKER_HOST_RE,
     _WORKER_ID_RE,
     AppConfigValidationError,
     SqliteSnapshotMountConfig,
@@ -260,61 +259,10 @@ def _optional_workers(value: Any, field_name: str) -> tuple[WorkerConfig, ...]:
             item.get("enabled"),
             f"{entry_field}.enabled",
         )
-        database_user = _optional_worker_database_value(
-            item.get("database_user"),
-            f"{entry_field}.database_user",
+        environment = _optional_runtime_env(
+            item.get("environment"),
+            f"{entry_field}.environment",
         )
-        database_name = _optional_worker_database_value(
-            item.get("database_name"),
-            f"{entry_field}.database_name",
-        )
-        database_password = _optional_worker_database_value(
-            item.get("database_password"),
-            f"{entry_field}.database_password",
-        )
-        database_engine = _optional_worker_database_engine(
-            item.get("database_engine"),
-            f"{entry_field}.database_engine",
-        )
-        database_host = _optional_worker_database_host(
-            item.get("database_host"),
-            f"{entry_field}.database_host",
-        )
-        database_port = _optional_worker_database_port(
-            item.get("database_port"),
-            f"{entry_field}.database_port",
-        )
-
-        has_any_database_field = any(
-            entry is not None
-            for entry in (
-                database_user,
-                database_name,
-                database_password,
-                database_engine,
-                database_host,
-                database_port,
-            )
-        )
-        if has_any_database_field:
-            if database_user is None:
-                raise AppConfigValidationError(
-                    f"{entry_field}.database_user is required when database settings are provided.",
-                )
-            if database_name is None:
-                raise AppConfigValidationError(
-                    f"{entry_field}.database_name is required when database_user is set.",
-                )
-            if database_password is None:
-                raise AppConfigValidationError(
-                    f"{entry_field}.database_password is required when database_user is set.",
-                )
-            if database_host is None:
-                database_host = "host.docker.internal"
-            if database_engine is None:
-                database_engine = "postgres"
-            if database_port is None:
-                database_port = 5432
 
         normalized.append(
             WorkerConfig(
@@ -325,12 +273,7 @@ def _optional_workers(value: Any, field_name: str) -> tuple[WorkerConfig, ...]:
                 memory_mb=memory_mb,
                 disk_mb=disk_mb,
                 enabled=enabled,
-                database_user=database_user,
-                database_name=database_name,
-                database_password=database_password,
-                database_engine=database_engine,
-                database_host=database_host,
-                database_port=database_port,
+                environment=environment,
             )
         )
 
@@ -388,55 +331,6 @@ def _optional_worker_enabled(value: Any, field_name: str) -> bool:
         return True
     if not isinstance(value, bool):
         raise AppConfigValidationError(f"{field_name} must be a boolean.")
-    return value
-
-
-def _optional_worker_database_value(value: Any, field_name: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise AppConfigValidationError(f"{field_name} must be a string or null.")
-    normalized = value.strip()
-    return normalized or None
-
-
-def _optional_worker_database_host(value: Any, field_name: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise AppConfigValidationError(f"{field_name} must be a string or null.")
-    normalized = value.strip().lower().rstrip(".")
-    if not normalized:
-        return None
-    if not _WORKER_HOST_RE.match(normalized):
-        raise AppConfigValidationError(f"{field_name} must be a valid hostname.")
-    return normalized
-
-
-def _optional_worker_database_engine(value: Any, field_name: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise AppConfigValidationError(f"{field_name} must be a string or null.")
-    normalized = value.strip().lower()
-    if not normalized:
-        return None
-    if normalized != "postgres":
-        raise AppConfigValidationError(
-            f"{field_name} must be one of: postgres.",
-        )
-    return normalized
-
-
-def _optional_worker_database_port(value: Any, field_name: str) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise AppConfigValidationError(f"{field_name} must be an integer or null.")
-    if value < 1 or value > 65535:
-        raise AppConfigValidationError(
-            f"{field_name} must be between 1 and 65535.",
-        )
     return value
 
 

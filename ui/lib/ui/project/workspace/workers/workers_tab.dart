@@ -17,7 +17,6 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
   bool _hasUnappliedChanges = false;
   String? _error;
   List<WorkerDraft> _workers = const <WorkerDraft>[];
-  List<WorkerDatabaseUser> _databaseUsers = const <WorkerDatabaseUser>[];
   final WorkspaceBusyRegistry _busyWorkers = WorkspaceBusyRegistry();
   WorkerRuntimeSnapshot _runtimeSnapshot = WorkerRuntimeSnapshot.empty;
 
@@ -48,7 +47,6 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
       _isLoading = true;
       _error = null;
       _workers = const <WorkerDraft>[];
-      _databaseUsers = const <WorkerDatabaseUser>[];
       _runtimeSnapshot = WorkerRuntimeSnapshot.empty;
       _hasUnappliedChanges = false;
       _busyWorkers.clear();
@@ -63,7 +61,6 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
 
       final loadedWorkers =
           ref.read(projectWorkerInstancesProvider)[projectId] ?? const [];
-      final databaseDiscovery = await _loadDatabaseUsers(project, server);
       await ref
           .read(appReleaseProvider.notifier)
           .loadScope(projectId: projectId, serverId: server.id);
@@ -79,7 +76,6 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
         _workers = loadedWorkers
             .map(WorkerDraft.fromWorker)
             .toList(growable: false);
-        _databaseUsers = databaseDiscovery.users;
         _runtimeSnapshot = cachedRuntimeSnapshot;
         _hasUnappliedChanges = !workerRuntimeSnapshotMatches(
           workers: loadedWorkers,
@@ -222,45 +218,6 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
     return settings;
   }
 
-  Future<WorkerDatabaseDiscoveryResult> _loadDatabaseUsers(
-    Project project,
-    Server server,
-  ) async {
-    if (!server.serviceDatabaseEnabled) {
-      return const WorkerDatabaseDiscoveryResult(users: <WorkerDatabaseUser>[]);
-    }
-    await ref
-        .read(projectManagedDatabaseProvider.notifier)
-        .loadScope(projectId: project.id, serverId: server.id);
-    final scope = ref
-        .read(projectManagedDatabaseProvider)
-        .scopeFor(projectId: project.id, serverId: server.id);
-    final users = scope.users
-        .where((user) => user.engine == 'postgres')
-        .map(
-          (user) => WorkerDatabaseUser(
-            engine: user.engine,
-            username: user.username,
-            database: user.databaseName,
-            accessMode: user.accessMode,
-          ),
-        )
-        .toList(growable: false);
-
-    users.sort((left, right) {
-      final engineCompare = left.engine.compareTo(right.engine);
-      if (engineCompare != 0) {
-        return engineCompare;
-      }
-      final databaseCompare = left.database.compareTo(right.database);
-      if (databaseCompare != 0) {
-        return databaseCompare;
-      }
-      return left.username.compareTo(right.username);
-    });
-    return WorkerDatabaseDiscoveryResult(users: users);
-  }
-
   WorkerRuntimeSnapshot _cachedWorkerRuntimeSnapshot({
     required String projectId,
     required String serverId,
@@ -340,29 +297,6 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
       setState(() {
         _isSaving = false;
         _error = 'Couldn’t save worker settings.\n$error';
-      });
-    }
-  }
-
-  Future<void> _refreshDatabaseUsers({
-    required Project project,
-    required Server server,
-  }) async {
-    final expectedEpoch = workspaceBindEpoch;
-    try {
-      final discovery = await _loadDatabaseUsers(project, server);
-      if (!isCurrentWorkspaceSelection(project, server, expectedEpoch)) {
-        return;
-      }
-      setState(() {
-        _databaseUsers = discovery.users;
-      });
-    } catch (error) {
-      if (!isCurrentWorkspaceSelection(project, server, expectedEpoch)) {
-        return;
-      }
-      setState(() {
-        _error = 'Couldn’t refresh the database user list.\n$error';
       });
     }
   }
@@ -849,24 +783,9 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
     final diskController = TextEditingController(
       text: (initial?.diskMb ?? 1024).toString(),
     );
-    final passwordController = TextEditingController(
-      text: initial?.databasePassword ?? '',
+    final environmentController = TextEditingController(
+      text: renderWorkerEnvironment(initial?.environment ?? const {}),
     );
-
-    String? selectedDatabaseKey;
-    if (initial != null &&
-        initial.databaseUser != null &&
-        initial.databaseName != null) {
-      final engine = initial.databaseEngine?.trim().toLowerCase() ?? 'postgres';
-      selectedDatabaseKey =
-          '$engine::${initial.databaseUser}::${initial.databaseName}';
-      final exists = _databaseUsers.any(
-        (user) => user.key == selectedDatabaseKey,
-      );
-      if (!exists) {
-        selectedDatabaseKey = null;
-      }
-    }
 
     bool enabled = initial?.enabled ?? true;
 
@@ -880,12 +799,11 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
             final cpu = double.tryParse(cpuController.text.trim());
             final memory = int.tryParse(memoryController.text.trim());
             final disk = int.tryParse(diskController.text.trim());
-            final selectedUser = selectedDatabaseKey == null
-                ? null
-                : _databaseUsers
-                      .where((user) => user.key == selectedDatabaseKey)
-                      .firstOrNull;
-            final databasePassword = passwordController.text.trim();
+            final environmentParsed = parseWorkerEnvironmentVariables(
+              environmentController.text,
+            );
+            final environmentError = environmentParsed.error;
+            final environmentCount = environmentParsed.variables.length;
 
             final nameError = name.isEmpty ? 'Worker name is required.' : null;
             final commandError = command.isEmpty
@@ -901,10 +819,6 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
             final diskError = disk == null || disk < 256 || disk > 1024 * 1024
                 ? 'Disk must be 256-1048576 MB.'
                 : null;
-            final databasePasswordError =
-                selectedUser != null && databasePassword.isEmpty
-                ? 'Database password is required for selected user.'
-                : null;
 
             final canSave =
                 nameError == null &&
@@ -912,7 +826,7 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
                 cpuError == null &&
                 memoryError == null &&
                 diskError == null &&
-                databasePasswordError == null;
+                environmentError == null;
 
             return AppFormDialog(
               title: workersEditorTitle(initial != null),
@@ -986,48 +900,22 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
                       title: 'Turn on this worker',
                     ),
                     const Divider(height: 22),
-                    AppSelectFormField<String>(
-                      fieldKey: const Key('workers-editor-db-user-dropdown'),
-                      labelText: 'Database user (optional)',
-                      value: selectedDatabaseKey,
-                      items: [
-                        const DropdownMenuItem<String>(
-                          value: '',
-                          child: Text('No database access'),
-                        ),
-                        ..._databaseUsers.map(
-                          (user) => DropdownMenuItem<String>(
-                            value: user.key,
-                            child: Text(
-                              '${user.engineLabel} · ${user.username} on ${user.database} (${user.accessLabel})',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        setDialogState(() {
-                          selectedDatabaseKey = (value == null || value.isEmpty)
-                              ? null
-                              : value;
-                          if (selectedDatabaseKey == null) {
-                            passwordController.clear();
-                          }
-                        });
-                      },
+                    AppTextFormField(
+                      fieldKey: const Key('workers-editor-environment-field'),
+                      controller: environmentController,
+                      onChanged: (_) => setDialogState(() {}),
+                      maxLines: 5,
+                      labelText: 'Environment variables (optional)',
+                      hintText: 'DATABASE_URL=postgresql://user:pass@host/db',
+                      helperText:
+                          environmentError == null && environmentCount > 0
+                          ? '$environmentCount '
+                                '${environmentCount == 1 ? 'variable' : 'variables'}'
+                          : 'One KEY=value per line. Blank lines and lines '
+                                'starting with # are ignored.',
+                      helperMaxLines: 2,
+                      validator: (_) => environmentError,
                     ),
-                    if (selectedUser != null) ...[
-                      const SizedBox(height: 10),
-                      AppPasswordFormField(
-                        fieldKey: const Key('workers-editor-db-password-field'),
-                        controller: passwordController,
-                        onChanged: (_) => setDialogState(() {}),
-                        labelText: 'Database password',
-                        hintText: 'Enter password for selected database user',
-                        validator: (_) => databasePasswordError,
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -1060,12 +948,9 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
                               cpuLimit: cpu,
                               memoryMb: memory,
                               diskMb: disk,
-                              databaseUser: selectedUser?.username,
-                              databaseName: selectedUser?.database,
-                              databasePassword: selectedUser == null
-                                  ? null
-                                  : databasePassword,
-                              databaseEngine: selectedUser?.engine,
+                              environment: Map<String, String>.of(
+                                environmentParsed.variables,
+                              ),
                               enabled: enabled,
                             ),
                           );
@@ -1085,16 +970,12 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
       cpuController.dispose();
       memoryController.dispose();
       diskController.dispose();
-      passwordController.dispose();
+      environmentController.dispose();
     });
     return result;
   }
 
   Future<void> _addWorker(Project project) async {
-    final selectedServer = ref.read(selectedServerProvider);
-    if (selectedServer != null) {
-      await _refreshDatabaseUsers(project: project, server: selectedServer);
-    }
     final created = await _showWorkerEditorDialog();
     if (created == null) {
       return;
@@ -1107,10 +988,6 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
   }
 
   Future<void> _editWorker(Project project, WorkerDraft worker) async {
-    final selectedServer = ref.read(selectedServerProvider);
-    if (selectedServer != null) {
-      await _refreshDatabaseUsers(project: project, server: selectedServer);
-    }
     final updated = await _showWorkerEditorDialog(initial: worker);
     if (updated == null) {
       return;

@@ -11,7 +11,7 @@ from orchestrator.app_parts.worker_runtime import (
 
 
 class TestWorkerRuntimeBuilder(unittest.TestCase):
-    def _worker(self, *, enabled=True):
+    def _worker(self, *, enabled=True, environment=None):
         return WorkerConfig(
             id="queue-worker",
             name="Queue worker",
@@ -20,12 +20,7 @@ class TestWorkerRuntimeBuilder(unittest.TestCase):
             memory_mb=512,
             disk_mb=2048,
             enabled=enabled,
-            database_user=None,
-            database_name=None,
-            database_password=None,
-            database_engine=None,
-            database_host=None,
-            database_port=None,
+            environment={} if environment is None else environment,
         )
 
     def test_render_runtime_env_stdin_renders_sorted_base64_lines(self):
@@ -99,21 +94,12 @@ class TestWorkerRuntimeBuilder(unittest.TestCase):
         )
         self.assertIn("-v snapshot:/snapshots/catalog:ro", spec.run_command)
 
-    def test_worker_run_command_includes_postgres_env_flags(self):
-        worker = WorkerConfig(
-            id="queue-worker",
-            name="Queue worker",
-            start_command="npm run worker:queue",
-            cpu_limit=1.0,
-            memory_mb=512,
-            disk_mb=2048,
-            enabled=True,
-            database_user="app_user",
-            database_name="app_db",
-            database_password="secret",
-            database_engine="postgres",
-            database_host="postgres.internal",
-            database_port=5432,
+    def test_worker_run_command_includes_custom_env_flags_sorted(self):
+        worker = self._worker(
+            environment={
+                "DATABASE_URL": "postgresql://db/one",
+                "ANOTHER_KEY": "another value",
+            }
         )
         spec = build_worker_runtime_command_spec(
             project_slug="remix-blog",
@@ -123,12 +109,22 @@ class TestWorkerRuntimeBuilder(unittest.TestCase):
             primary_network_env_var="WORKER_NETWORK",
         )
         self.assertIn("-e APP_ENV=production", spec.run_command)
-        self.assertIn("-e DATABASE_ENGINE=postgres", spec.run_command)
-        self.assertIn("-e DATABASE_HOST=postgres.internal", spec.run_command)
-        self.assertIn("-e DATABASE_PORT=5432", spec.run_command)
-        self.assertIn("-e DATABASE_NAME=app_db", spec.run_command)
-        self.assertIn("-e DATABASE_USER=app_user", spec.run_command)
-        self.assertIn("-e DATABASE_PASSWORD=secret", spec.run_command)
+        self.assertIn("-e 'ANOTHER_KEY=another value'", spec.run_command)
+        self.assertIn("-e DATABASE_URL=postgresql://db/one", spec.run_command)
+        self.assertLess(
+            spec.run_command.index("ANOTHER_KEY="),
+            spec.run_command.index("DATABASE_URL="),
+        )
+
+    def test_worker_run_command_omits_env_flags_when_empty(self):
+        spec = build_worker_runtime_command_spec(
+            project_slug="remix-blog",
+            image_name="deploydash_remix-blog:latest",
+            worker=self._worker(),
+            runtime_env_docker_flags="",
+            primary_network_env_var="WORKER_NETWORK",
+        )
+        self.assertNotIn("-e ", spec.run_command)
 
     def test_worker_run_command_connects_trust_networks(self):
         spec = build_worker_runtime_command_spec(

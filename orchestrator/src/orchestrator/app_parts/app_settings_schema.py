@@ -84,10 +84,6 @@ _HOST_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$"
 )
-_WORKER_HOST_RE = re.compile(
-    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?\.)*"
-    r"[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])$"
-)
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _WORKER_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _TLS_PROVIDERS = (
@@ -211,12 +207,7 @@ class WorkerConfig:
     memory_mb: int
     disk_mb: int
     enabled: bool
-    database_user: str | None
-    database_name: str | None
-    database_password: str | None
-    database_engine: str | None
-    database_host: str | None
-    database_port: int | None
+    environment: dict[str, str]
 
 
 @dataclass(frozen=True)

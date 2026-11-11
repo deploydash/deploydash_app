@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('buildWorkersWorkflowPayload', () {
-    test('builds normalized payload and includes database credentials', () {
+    test('builds normalized payload and includes the environment map', () {
       final payload = buildWorkersWorkflowPayload(
         workers: const [
           ProjectWorkerInstance(
@@ -15,9 +15,10 @@ void main() {
             cpuLimit: 1.5,
             memoryMb: 512,
             diskMb: 2048,
-            databaseUser: ' app_rw ',
-            databaseName: ' app_db ',
-            databasePassword: ' pw-123 ',
+            environment: {
+              'DATABASE_URL': 'postgresql://db/one',
+              'ANOTHER_KEY': 'another value',
+            },
             enabled: true,
           ),
         ],
@@ -27,14 +28,13 @@ void main() {
       expect(payload.first['id'], 'queue-worker');
       expect(payload.first['name'], 'Queue Worker');
       expect(payload.first['start_cmd'], 'npm run worker:queue');
-      expect(payload.first['database_user'], 'app_rw');
-      expect(payload.first['database_name'], 'app_db');
-      expect(payload.first['database_password'], 'pw-123');
-      expect(payload.first['database_host'], workerRuntimeDefaultDatabaseHost);
-      expect(payload.first['database_port'], workerRuntimeDefaultDatabasePort);
+      expect(payload.first['environment'], {
+        'DATABASE_URL': 'postgresql://db/one',
+        'ANOTHER_KEY': 'another value',
+      });
     });
 
-    test('omits invalid workers and partial database fields', () {
+    test('omits invalid workers and the environment key when empty', () {
       final payload = buildWorkersWorkflowPayload(
         workers: const [
           ProjectWorkerInstance(
@@ -45,9 +45,6 @@ void main() {
             cpuLimit: 1,
             memoryMb: 256,
             diskMb: 1024,
-            databaseUser: 'app_rw',
-            databaseName: 'app_db',
-            databasePassword: '',
           ),
           ProjectWorkerInstance(
             id: '',
@@ -63,34 +60,33 @@ void main() {
 
       expect(payload, hasLength(1));
       expect(payload.first['id'], 'worker-a');
-      expect(payload.first.containsKey('database_user'), isFalse);
-      expect(payload.first.containsKey('database_name'), isFalse);
-      expect(payload.first.containsKey('database_password'), isFalse);
+      expect(payload.first.containsKey('environment'), isFalse);
+    });
+  });
+
+  group('workerEnvironmentFingerprint', () {
+    test('matches the backend digest for a fixed map', () {
+      // Pinned on both sides: the backend stamps this same literal in
+      // release_observability tests. If either side drifts, applied
+      // workers read as unapplied (or the reverse).
+      expect(
+        workerEnvironmentFingerprint(const {
+          'DATABASE_URL': 'postgresql://db/one',
+          'ANOTHER_KEY': 'another value',
+        }),
+        'f6e3eb4119824e891c0d2400c6fe70a6d70ed08717be466167aabf4dc0f4108d',
+      );
     });
 
-    test('ignores unsupported database engines', () {
-      final payload = buildWorkersWorkflowPayload(
-        workers: const [
-          ProjectWorkerInstance(
-            id: 'vector-worker',
-            projectId: 'project-a',
-            name: 'Vector Worker',
-            startCommand: 'python worker.py',
-            cpuLimit: 1,
-            memoryMb: 512,
-            diskMb: 2048,
-            databaseUser: 'vector_rw',
-            databaseName: 'vector_db',
-            databasePassword: 'secret',
-            databaseEngine: 'other',
-          ),
-        ],
+    test('is order-independent and empty-aware', () {
+      expect(
+        workerEnvironmentFingerprint(const {'B': '2', 'A': '1'}),
+        workerEnvironmentFingerprint(const {'A': '1', 'B': '2'}),
       );
-
-      expect(payload, hasLength(1));
-      expect(payload.first.containsKey('database_engine'), isFalse);
-      expect(payload.first.containsKey('database_host'), isFalse);
-      expect(payload.first.containsKey('database_port'), isFalse);
+      expect(
+        workerEnvironmentFingerprint(const {}),
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      );
     });
   });
 
@@ -161,6 +157,8 @@ void main() {
               'cpu_limit': '2.0',
               'memory_mb': 1024.0,
               'disk_mb': '4096',
+              'environment_sha256':
+                  'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
             },
           ],
           'orphans': const <dynamic>[],
@@ -173,6 +171,66 @@ void main() {
           snapshot: snapshot,
         ),
         isTrue,
+      );
+    });
+
+    Map<String, String>? fingerprintEntry(String? fingerprint) {
+      if (fingerprint == null) {
+        return null;
+      }
+      return {'environment_sha256': fingerprint};
+    }
+
+    test('rejects environment drift and fingerprint-less rows', () {
+      WorkerRuntimeSnapshot snapshotWith(String? fingerprint) {
+        return WorkerRuntimeSnapshot.fromResponse({
+          'workers': {
+            'configured': [
+              {
+                'id': 'worker-a',
+                'start_cmd': 'php artisan queue:work',
+                'enabled': true,
+                'cpu_limit': 2,
+                'memory_mb': 1024,
+                'disk_mb': 4096,
+                ...?fingerprintEntry(fingerprint),
+              },
+            ],
+            'orphans': const <dynamic>[],
+          },
+        });
+      }
+
+      const changed = ProjectWorkerInstance(
+        id: 'worker-a',
+        projectId: 'project-a',
+        name: 'Worker A',
+        startCommand: 'php artisan queue:work',
+        cpuLimit: 2,
+        memoryMb: 1024,
+        diskMb: 4096,
+        enabled: true,
+        environment: {'DATABASE_URL': 'postgresql://db/one'},
+      );
+
+      // The row's fingerprint is for an empty environment; the worker now
+      // carries a variable, so it reads as unapplied.
+      expect(
+        workerRuntimeSnapshotMatches(
+          workers: const [changed],
+          snapshot: snapshotWith(
+            'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+          ),
+        ),
+        isFalse,
+      );
+      // A row without any fingerprint predates tracking entirely.
+      expect(
+        workerRuntimeSnapshotMatches(
+          workers: const [worker],
+          snapshot: snapshotWith(null),
+        ),
+        isFalse,
       );
     });
 
@@ -196,6 +254,10 @@ void main() {
         ),
         isFalse,
       );
+      // Fingerprints below match the worker's empty environment, so each
+      // rejection below pins its named reason rather than the fingerprint.
+      const emptyFingerprint =
+          'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
       expect(
         workerRuntimeSnapshotMatches(
           workers: const [worker],
@@ -206,6 +268,7 @@ void main() {
             'cpu_limit': 2,
             'memory_mb': 1024,
             'disk_mb': 4096,
+            'environment_sha256': emptyFingerprint,
           }),
         ),
         isFalse,
@@ -220,6 +283,7 @@ void main() {
             'cpu_limit': 'not-a-number',
             'memory_mb': 1024,
             'disk_mb': 4096,
+            'environment_sha256': emptyFingerprint,
           }),
         ),
         isFalse,
