@@ -156,6 +156,10 @@ def build_worker_runtime_command_spec(
         "; " + "; ".join(network_connect_commands) if network_connect_commands else ""
     )
 
+    # Non-login `sh -c` on purpose: a login shell sources Debian's
+    # /etc/profile, which overwrites PATH and drops the image's baked
+    # entries (Railpack's /mise/shims), so plain `npm ...` start commands
+    # fail to resolve. The web app container starts non-login the same way.
     run_with_storage = (
         "docker run -d "
         f"--name {quoted_worker_container_name} "
@@ -171,7 +175,7 @@ def build_worker_runtime_command_spec(
         f"{worker_labels}"
         f"{rendered_extra_labels}"
         f"--entrypoint /bin/sh "
-        f"{quoted_image_name} -lc {worker_command}"
+        f"{quoted_image_name} -c {worker_command}"
     )
     run_without_storage = (
         "docker run -d "
@@ -187,7 +191,7 @@ def build_worker_runtime_command_spec(
         f"{worker_labels}"
         f"{rendered_extra_labels}"
         f"--entrypoint /bin/sh "
-        f"{quoted_image_name} -lc {worker_command}"
+        f"{quoted_image_name} -c {worker_command}"
     )
     run_command = (
         f"docker rm -f {quoted_worker_container_name} >/dev/null 2>&1 || true; "

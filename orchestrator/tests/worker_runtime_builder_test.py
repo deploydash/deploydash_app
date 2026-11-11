@@ -80,13 +80,33 @@ class TestWorkerRuntimeBuilder(unittest.TestCase):
         self.assertNotIn("--cap-drop ALL", specs[0].run_command)
         self.assertIn("--pids-limit 512", specs[0].run_command)
         self.assertIn(
-            "--entrypoint /bin/sh deploydash_remix-blog:latest -lc 'npm run worker:queue'",
+            "--entrypoint /bin/sh deploydash_remix-blog:latest -c 'npm run worker:queue'",
             specs[0].run_command,
         )
         self.assertNotIn(
-            "deploydash_remix-blog:latest sh -lc",
+            "deploydash_remix-blog:latest sh -c",
             specs[0].run_command,
         )
+
+    def test_worker_run_command_uses_non_login_shell(self):
+        # A login shell (`-l`) sources Debian's /etc/profile, which
+        # overwrites PATH and drops the image's baked entries (Railpack's
+        # /mise/shims), so plain `npm ...` start commands fail to resolve.
+        # Non-login `sh -c` inherits the image ENV intact, exactly like the
+        # web app container's own startup.
+        specs = build_worker_runtime_command_specs(
+            project_slug="remix-blog",
+            image_name="deploydash_remix-blog:latest",
+            workers=[self._worker()],
+            runtime_env_docker_flags="",
+            primary_network_env_var="WORKER_NETWORK",
+        )
+        self.assertEqual(len(specs), 1)
+        self.assertIn(
+            "deploydash_remix-blog:latest -c 'npm run worker:queue'",
+            specs[0].run_command,
+        )
+        self.assertNotIn("-lc ", specs[0].run_command)
 
     def test_worker_run_command_includes_readonly_volume_flags(self):
         spec = build_worker_runtime_command_spec(
