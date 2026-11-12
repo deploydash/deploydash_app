@@ -127,6 +127,25 @@ String formatGitHubAuthError(Object error) {
   return 'GitHub authorization failed: $normalized';
 }
 
+/// One owner (D-26 pair E): true when any marker appears in the failure
+/// message or any timeline line, case-insensitively. The railpack-detection
+/// and output-path hints plus the clone-access detector shared this scan
+/// core verbatim; each keeps its own markers, gates, and hint text.
+bool _failureMentionsAny(
+  String failureMessage,
+  List<String> timeline,
+  List<String> markers,
+) {
+  final normalizedFailure = failureMessage.toLowerCase();
+  if (markers.any(normalizedFailure.contains)) {
+    return true;
+  }
+  return timeline.any((line) {
+    final normalizedLine = line.toLowerCase();
+    return markers.any(normalizedLine.contains);
+  });
+}
+
 /// Guidance when the build failed because Railpack could not find the app.
 ///
 /// The monorepo case: the app is real but lives in a subdirectory nobody has
@@ -141,20 +160,11 @@ String? hintForMissingRailpackApp({
     return null;
   }
 
-  final hasRailpackDetectionFailure =
-      normalizedFailure.contains(
-        'railpack could not determine how to build the app',
-      ) ||
-      normalizedFailure.contains('script start.sh not found') ||
-      timeline.any((line) {
-        final normalized = line.toLowerCase();
-        return normalized.contains(
-              'railpack could not determine how to build the app',
-            ) ||
-            normalized.contains('script start.sh not found');
-      });
-
-  if (!hasRailpackDetectionFailure) {
+  const detectionMarkers = <String>[
+    'railpack could not determine how to build the app',
+    'script start.sh not found',
+  ];
+  if (!_failureMentionsAny(failureMessage, timeline, detectionMarkers)) {
     return null;
   }
 
@@ -176,18 +186,10 @@ String? hintForWrongBuildOutputPath({
   required String failureMessage,
   required List<String> timeline,
 }) {
-  final normalizedFailure = failureMessage.toLowerCase();
-  final hasOutputCopyFailure =
-      normalizedFailure.contains(
-        "cp: cannot create regular file '.output/server'",
-      ) ||
-      timeline.any((line) {
-        final normalized = line.toLowerCase();
-        return normalized.contains(
-          "cp: cannot create regular file '.output/server'",
-        );
-      });
-  if (!hasOutputCopyFailure) {
+  const outputMarkers = <String>[
+    "cp: cannot create regular file '.output/server'",
+  ];
+  if (!_failureMentionsAny(failureMessage, timeline, outputMarkers)) {
     return null;
   }
   return 'Your build script is copying into `.output/server`, but this build '
@@ -346,16 +348,10 @@ bool isRepositoryCloneAccessFailure({
     'correct access rights',
     'permission denied (publickey)',
   ];
-  final normalizedFailure = failureMessage.toLowerCase();
-  if (hardAccessFailureMarkers.any(normalizedFailure.contains)) {
-    return true;
-  }
-  for (final line in timeline) {
-    final normalizedLine = line.toLowerCase();
-    if (hardAccessFailureMarkers.any(normalizedLine.contains)) {
-      return true;
-    }
-  }
-  return false;
+  return _failureMentionsAny(
+    failureMessage,
+    timeline,
+    hardAccessFailureMarkers,
+  );
 }
 // end coverage-gate

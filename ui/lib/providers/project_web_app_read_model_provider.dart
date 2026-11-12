@@ -5,6 +5,7 @@ import '../data/local/app_release_repository.dart';
 import '../models/app_public_health.dart';
 import '../models/container_runtime_status.dart';
 import '../utils/first_present_value.dart';
+import '../utils/github_fqdn_pattern.dart';
 
 enum ProjectWebAppReadDeployState { idle, latestDeploymentFailed }
 
@@ -148,10 +149,7 @@ bool isValidProjectWebAppDomain(String value) {
   if (candidate.isEmpty || candidate == 'not configured') {
     return false;
   }
-  final fqdn = RegExp(
-    r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$',
-  );
-  return fqdn.hasMatch(candidate);
+  return githubFqdnPattern.hasMatch(candidate);
 }
 
 String canonicalProjectWebAppDomain({

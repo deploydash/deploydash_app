@@ -99,10 +99,6 @@ const _sameNameBodyExemptions = <String, _NameExemption>{
     reason: 'Workspace-specific timestamp presentation.',
     sourceCount: 2,
   ),
-  '_isValidBranch': _NameExemption(
-    reason: 'GitHub discovery and deploy validation have distinct contracts.',
-    sourceCount: 3,
-  ),
   '_isValidDomain': _NameExemption(
     reason: 'Each caller validates a different domain-input boundary.',
     sourceCount: 5,
@@ -125,10 +121,6 @@ const _sameNameBodyExemptions = <String, _NameExemption>{
   '_normalizeEngine': _NameExemption(
     reason: 'Managed and shared database flows use distinct engine inputs.',
     sourceCount: 2,
-  ),
-  '_normalizedAppSubdirectory': _NameExemption(
-    reason: 'Project persistence and UI input boundaries remain separate.',
-    sourceCount: 4,
   ),
   '_normalizedDomainConfig': _NameExemption(
     reason: 'D-22 folds the persistence/provider domain-config pair into one.',

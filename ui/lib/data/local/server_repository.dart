@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/server.dart';
+import '../../utils/project_slug.dart';
 import '../../utils/trim_or_null.dart';
 import 'app_database.dart';
 import 'server_config_json_codecs.dart';
@@ -791,12 +792,7 @@ class ServerRepository {
   }
 
   static String _createServerId(String name, DateTime timestamp) {
-    final slug = name
-        .toLowerCase()
-        .trim()
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-        .replaceAll(RegExp(r'^-+|-+$'), '');
-    final normalized = slug.isEmpty ? 'server' : slug;
+    final normalized = slugifyProjectName(name, fallback: 'server');
     return '${normalized}_${timestamp.microsecondsSinceEpoch}';
   }
 

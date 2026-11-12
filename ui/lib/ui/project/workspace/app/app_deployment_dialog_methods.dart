@@ -179,8 +179,9 @@ extension _AppDeploymentDialogMethods on _AppDeploymentSummaryState {
         railpackBuildCommand: _buildCommandFor(projectId),
         railpackRunCommand: _runCommandFor(projectId),
         railpackProvider: _railpackProviderFor(projectId),
-        appSubdirectory: _normalizedAppSubdirectory(
+        appSubdirectory: normalizeAppSubdirectory(
           _appSubdirectoryFor(projectId),
+          invalidValue: _invalidAppSubdirectory,
         ),
       ),
     );
@@ -301,10 +302,7 @@ extension _AppDeploymentDialogMethods on _AppDeploymentSummaryState {
     if (candidate.isEmpty || candidate == 'not configured') {
       return false;
     }
-    final fqdn = RegExp(
-      r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$',
-    );
-    return fqdn.hasMatch(candidate);
+    return githubFqdnPattern.hasMatch(candidate);
   }
 
   bool _isValidBranch(String value) {
@@ -312,7 +310,7 @@ extension _AppDeploymentDialogMethods on _AppDeploymentSummaryState {
     if (candidate.isEmpty) {
       return false;
     }
-    return RegExp(r'^[A-Za-z0-9._/-]+$').hasMatch(candidate);
+    return githubBranchPattern.hasMatch(candidate);
   }
 
   String _formatTimestamp(DateTime? timestamp) {

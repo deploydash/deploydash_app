@@ -14,9 +14,11 @@ extension _BackupOperationMethods on _BackupSummaryState {
       _error = null;
     });
     try {
+      // Empty fallback: the epoch suffix disambiguates, so a name that
+      // normalizes away keeps the historical `-<epoch>` id shape.
       final destinationId =
           draft.id ??
-          '${draft.name.toLowerCase().replaceAll(RegExp(r"[^a-z0-9]+"), "-").replaceAll(RegExp(r"^-+|-+$"), "")}-${DateTime.now().millisecondsSinceEpoch}';
+          '${slugifyProjectName(draft.name, fallback: '')}-${DateTime.now().millisecondsSinceEpoch}';
       await ref
           .read(projectBackupProvider.notifier)
           .upsertDestination(
