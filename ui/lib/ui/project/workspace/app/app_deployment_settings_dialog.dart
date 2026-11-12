@@ -1,37 +1,11 @@
 part of '../../project_workspace.dart';
 
-String? _normalizedDeploymentSettingsAppSubdirectory(String value) {
-  final normalized = value
-      .trim()
-      .replaceAll('\\', '/')
-      .replaceAll(RegExp(r'^/+|/+$'), '');
-  if (normalized.isEmpty) {
-    return null;
-  }
-  final segments = normalized.split('/');
-  final cleaned = <String>[];
-  for (final segment in segments) {
-    final trimmed = segment.trim();
-    if (trimmed.isEmpty || trimmed == '.' || trimmed == '..') {
-      return _invalidAppSubdirectory;
-    }
-    cleaned.add(trimmed);
-  }
-  if (cleaned.isEmpty) {
-    return null;
-  }
-  return cleaned.join('/');
-}
-
 bool _isValidDeploymentSettingsDomain(String value) {
   final candidate = value.trim().toLowerCase();
   if (candidate.isEmpty || candidate == 'not configured') {
     return false;
   }
-  final fqdn = RegExp(
-    r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$',
-  );
-  return fqdn.hasMatch(candidate);
+  return githubFqdnPattern.hasMatch(candidate);
 }
 
 bool _isValidDeploymentSettingsBranch(String value) {
@@ -39,7 +13,7 @@ bool _isValidDeploymentSettingsBranch(String value) {
   if (candidate.isEmpty) {
     return false;
   }
-  return RegExp(r'^[A-Za-z0-9._/-]+$').hasMatch(candidate);
+  return githubBranchPattern.hasMatch(candidate);
 }
 
 bool _isValidDeploymentPublicHealthPath(String value) {
@@ -247,10 +221,10 @@ class _AppDeploymentSettingsDialogState
     final buildCommand = _buildCommandController.text.trim();
     final runCommand = _runCommandController.text.trim();
     final selectedRuntime = railpackRuntimeForSelection(_runtimeSelectionId);
-    final normalizedAppSubdirectory =
-        _normalizedDeploymentSettingsAppSubdirectory(
-          _appSubdirectoryController.text,
-        );
+    final normalizedAppSubdirectory = normalizeAppSubdirectory(
+      _appSubdirectoryController.text,
+      invalidValue: _invalidAppSubdirectory,
+    );
 
     final normalizedDomainConfig = _isValidDeploymentSettingsDomain(domain)
         ? _normalizedDomainRoutingConfigForWorkspace(

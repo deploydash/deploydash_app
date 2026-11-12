@@ -118,33 +118,7 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
     if (candidate.isEmpty || candidate == 'not configured') {
       return false;
     }
-    final fqdn = RegExp(
-      r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$',
-    );
-    return fqdn.hasMatch(candidate);
-  }
-
-  String? _normalizedAppSubdirectory(String value) {
-    final normalized = value
-        .trim()
-        .replaceAll('\\', '/')
-        .replaceAll(RegExp(r'^/+|/+$'), '');
-    if (normalized.isEmpty) {
-      return null;
-    }
-    final segments = normalized.split('/');
-    final cleaned = <String>[];
-    for (final segment in segments) {
-      final trimmed = segment.trim();
-      if (trimmed.isEmpty || trimmed == '.' || trimmed == '..') {
-        return null;
-      }
-      cleaned.add(trimmed);
-    }
-    if (cleaned.isEmpty) {
-      return null;
-    }
-    return cleaned.join('/');
+    return githubFqdnPattern.hasMatch(candidate);
   }
 
   Future<Map<String, dynamic>> _buildAppWorkflowSettings({
@@ -198,7 +172,7 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
             .toList(growable: false),
       ),
     };
-    final normalizedAppSubdirectory = _normalizedAppSubdirectory(
+    final normalizedAppSubdirectory = normalizeAppSubdirectory(
       project.appSubdirectory ?? '',
     );
     if (normalizedAppSubdirectory != null) {

@@ -212,29 +212,6 @@ extension _AppDeploymentEnvironmentMethods on _AppDeploymentSummaryState {
     return _appSubdirectoryByProject[projectId] ?? _defaultAppSubdirectory;
   }
 
-  String? _normalizedAppSubdirectory(String value) {
-    final normalized = value
-        .trim()
-        .replaceAll('\\', '/')
-        .replaceAll(RegExp(r'^/+|/+$'), '');
-    if (normalized.isEmpty) {
-      return null;
-    }
-    final segments = normalized.split('/');
-    final cleaned = <String>[];
-    for (final segment in segments) {
-      final trimmed = segment.trim();
-      if (trimmed.isEmpty || trimmed == '.' || trimmed == '..') {
-        return _invalidAppSubdirectory;
-      }
-      cleaned.add(trimmed);
-    }
-    if (cleaned.isEmpty) {
-      return null;
-    }
-    return cleaned.join('/');
-  }
-
   String _tlsChallengeModeFor(String projectId) {
     final normalized = _tlsChallengeModeByProject[projectId]
         ?.trim()
@@ -438,8 +415,9 @@ extension _AppDeploymentEnvironmentMethods on _AppDeploymentSummaryState {
             primaryDomain: normalizedDomain,
             domainRoutingMode: _domainRoutingModeFor(project.id),
           );
-    final normalizedAppSubdirectory = _normalizedAppSubdirectory(
+    final normalizedAppSubdirectory = normalizeAppSubdirectory(
       _appSubdirectoryFor(project.id),
+      invalidValue: _invalidAppSubdirectory,
     );
     final selectedServer = ref.read(selectedServerProvider);
     final enabledDnsProviders =

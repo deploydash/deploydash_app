@@ -22,6 +22,8 @@ import '../services/project_database_settings.dart';
 import '../services/runtime_log_settings.dart';
 import '../services/sensitive_data_sanitizer.dart';
 import '../services/ssh_service.dart';
+import '../utils/github_branch_pattern.dart';
+import '../utils/github_fqdn_pattern.dart';
 import '../utils/project_slug.dart';
 import '../utils/trim_or_null.dart';
 import 'agent_access/authorization.dart';
@@ -398,17 +400,12 @@ class AgentAccessService {
     };
   }
 
-  static final RegExp _branchPattern = RegExp(r'^[A-Za-z0-9._/-]+$');
-
   bool _isValidDomain(String value) {
     final candidate = value.trim().toLowerCase();
     if (candidate.isEmpty || candidate == 'not configured') {
       return false;
     }
-    final fqdn = RegExp(
-      r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$',
-    );
-    return fqdn.hasMatch(candidate);
+    return githubFqdnPattern.hasMatch(candidate);
   }
 
   bool _isValidBranch(String value) {
@@ -416,7 +413,7 @@ class AgentAccessService {
     if (candidate.isEmpty) {
       return false;
     }
-    return _branchPattern.hasMatch(candidate);
+    return githubBranchPattern.hasMatch(candidate);
   }
 
   String? _runtimeIdToProvider(String? runtimeId) {

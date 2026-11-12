@@ -23,7 +23,10 @@ import '../models/github_repository.dart';
 import '../models/workspace_scope.dart';
 import '../models/result.dart';
 import '../services/app_analytics_service.dart';
+import '../utils/app_subdirectory.dart';
 import '../utils/format_clock_time.dart';
+import '../utils/github_branch_pattern.dart';
+import '../utils/github_fqdn_pattern.dart';
 import '../utils/project_slug.dart';
 import '../utils/trim_or_null.dart';
 import 'telemetry_settings_provider.dart';
@@ -44,6 +47,16 @@ import 'github_deploy_diagnostics.dart';
 import 'github_integration_state.dart';
 
 const _deployFailureEvidenceTerminalSource = 'app_deploy_failure_evidence';
+
+/// The connected status sentence (D-26): one owner for the four provider
+/// sites. Takes the list because the call sites test different subjects
+/// (a fresh fetch vs the stored state); the agent-access tool keeps its
+/// own sentence because its second branch differs.
+String _githubConnectedMessage(List<GitHubRepository> repositories) {
+  return repositories.isEmpty
+      ? 'GitHub connected. No repositories found.'
+      : 'GitHub connected. Pick a repository to deploy.';
+}
 
 // coverage-gate: deploy_failure_result_decoding
 /// Reads typed evidence from the one engine-result decoding boundary.
@@ -124,6 +137,74 @@ class _GitHubDeployRunContext {
   String get serverId => run.scope.serverId;
 }
 
+/// The mutable per-run half of a repository deploy (D-26).
+///
+/// [GitHubIntegrationNotifier.deploySelectedRepository] used to carry this
+/// state in captured locals shared by nine closures; the closures are now
+/// named methods and the state they share lives here instead. Everything
+/// else a step needs arrives as explicit parameters, so the data flow
+/// stays visible at the call sites. One instance per deploy run — never
+/// stored on the notifier.
+/// Validated inputs for one repository deploy (D-26).
+///
+/// [_GitHubDeployRunContext] carries the run identity; this carries
+/// everything validation resolved or normalized before the run starts.
+/// Null from [_resolveDeployRunInputs] means validation already failed
+/// the run via [_failDeployBeforeRun].
+class _DeployRunInputs {
+  const _DeployRunInputs({
+    required this.token,
+    required this.selectedServer,
+    required this.selectedProject,
+    required this.selectedRepo,
+    required this.connection,
+    required this.normalizedProvider,
+    required this.effectiveBuildCommand,
+    required this.effectiveRunCommand,
+    required this.includeBuildCommand,
+    required this.includeRunCommand,
+    required this.effectiveAppSubdirectory,
+    required this.effectiveDomainRoutingMode,
+  });
+
+  final String token;
+  final Server selectedServer;
+  final Project selectedProject;
+  final String selectedRepo;
+  final Map<String, dynamic> connection;
+  final String? normalizedProvider;
+  final String effectiveBuildCommand;
+  final String effectiveRunCommand;
+  final bool includeBuildCommand;
+  final bool includeRunCommand;
+  final String? effectiveAppSubdirectory;
+  final String effectiveDomainRoutingMode;
+}
+
+class _DeployRun {
+  _DeployRun({
+    required this.runContext,
+    required this.selectedProject,
+    required this.selectedServer,
+    required this.selectedRepo,
+    required this.branch,
+    required this.primaryDomain,
+    required this.deploymentStartedAt,
+  });
+
+  final _GitHubDeployRunContext runContext;
+  final Project selectedProject;
+  final Server selectedServer;
+  final String selectedRepo;
+  final String branch;
+  final String primaryDomain;
+  final DateTime deploymentStartedAt;
+  List<String> deployTimeline = <String>[];
+  bool outcomePersisted = false;
+  late ProjectManagedOperationJournalRecord latestDeployJournal;
+  DeployFailureEvidence? latestDeployFailureEvidence;
+}
+
 class _PendingRepositoryHostKeyRetry {
   const _PendingRepositoryHostKeyRetry({
     required this.primaryDomain,
@@ -154,6 +235,14 @@ class _PendingRepositoryHostKeyRetry {
   final Project? selectedProject;
   final String? actorLabel;
   final void Function(int taskId, String phase)? onTaskStarted;
+}
+
+/// Settings payload one owner (D-26) threads through a deploy run.
+class _DeploySettings {
+  _DeploySettings({required this.baseSettings, required this.runtimeEnv});
+
+  final Map<String, dynamic> baseSettings;
+  final Map<String, String> runtimeEnv;
 }
 
 class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
@@ -360,6 +449,23 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
       authToken: token,
     );
 
+    // One owner (D-26 pair D): the IOException/StateError twins were
+    // byte-identical. Returning from the closure is the same as returning
+    // from the method here — the call is the last statement of each block.
+    Future<void> sessionExpired() async {
+      await secretRepo.clearAuthToken();
+      if (!ref.mounted) {
+        return;
+      }
+      state = state.copyWith(
+        connectStatus: GitHubConnectStatus.disconnected,
+        statusMessage: 'Stored GitHub session expired. Please reconnect.',
+        clearAuthToken: true,
+        repositories: const [],
+        clearSelectedRepository: true,
+      );
+    }
+
     try {
       final repos = await ref
           .read(gitHubAuthGatewayProvider)
@@ -372,34 +478,12 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         connectStatus: GitHubConnectStatus.connected,
         repositories: repos,
         selectedRepositoryFullName: preferredRepository,
-        statusMessage: repos.isEmpty
-            ? 'GitHub connected. No repositories found.'
-            : 'GitHub connected. Pick a repository to deploy.',
+        statusMessage: _githubConnectedMessage(repos),
       );
     } on IOException {
-      await secretRepo.clearAuthToken();
-      if (!ref.mounted) {
-        return;
-      }
-      state = state.copyWith(
-        connectStatus: GitHubConnectStatus.disconnected,
-        statusMessage: 'Stored GitHub session expired. Please reconnect.',
-        clearAuthToken: true,
-        repositories: const [],
-        clearSelectedRepository: true,
-      );
+      await sessionExpired();
     } on StateError {
-      await secretRepo.clearAuthToken();
-      if (!ref.mounted) {
-        return;
-      }
-      state = state.copyWith(
-        connectStatus: GitHubConnectStatus.disconnected,
-        statusMessage: 'Stored GitHub session expired. Please reconnect.',
-        clearAuthToken: true,
-        repositories: const [],
-        clearSelectedRepository: true,
-      );
+      await sessionExpired();
     }
   }
 
@@ -464,6 +548,27 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
     }
   }
 
+  /// One owner (D-26) for the four OAuth failure tails: drop the pending
+  /// state, track the failed stage, and land on the error message. Only
+  /// the exchange catch also drops a saved token, so that stays opt-in.
+  Future<void> _failOauth(
+    String statusMessage, {
+    bool clearToken = false,
+  }) async {
+    if (clearToken) {
+      await ref.read(gitHubSecretRepositoryProvider).clearAuthToken();
+    }
+    _pendingOauthState = null;
+    await ref
+        .read(appPreferencesRepositoryProvider)
+        .setGitHubPendingOauthState(null);
+    _trackOAuthStage(GitHubOAuthStage.failed);
+    state = state.copyWith(
+      connectStatus: GitHubConnectStatus.error,
+      statusMessage: statusMessage,
+    );
+  }
+
   Future<void> connectGitHub() async {
     _trackOAuthStage(GitHubOAuthStage.started);
     final preferences = ref.read(appPreferencesRepositoryProvider);
@@ -489,13 +594,7 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         .openAuthorizationUrl(authUrl);
 
     if (!launched) {
-      _pendingOauthState = null;
-      await preferences.setGitHubPendingOauthState(null);
-      _trackOAuthStage(GitHubOAuthStage.failed);
-      state = state.copyWith(
-        connectStatus: GitHubConnectStatus.error,
-        statusMessage: 'Could not open browser. Open OAuth URL manually.',
-      );
+      await _failOauth('Could not open browser. Open OAuth URL manually.');
       return;
     }
 
@@ -535,25 +634,13 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
       if (expectedState == null) {
         return;
       }
-      _pendingOauthState = null;
-      await preferences.setGitHubPendingOauthState(null);
-      _trackOAuthStage(GitHubOAuthStage.failed);
-      state = state.copyWith(
-        connectStatus: GitHubConnectStatus.error,
-        statusMessage: 'OAuth state mismatch. Please reconnect GitHub.',
-      );
+      await _failOauth('OAuth state mismatch. Please reconnect GitHub.');
       return;
     }
 
     final code = callbackUri.queryParameters['code'];
     if (code == null || code.isEmpty) {
-      _pendingOauthState = null;
-      await preferences.setGitHubPendingOauthState(null);
-      _trackOAuthStage(GitHubOAuthStage.failed);
-      state = state.copyWith(
-        connectStatus: GitHubConnectStatus.error,
-        statusMessage: 'Missing GitHub authorization code in callback.',
-      );
+      await _failOauth('Missing GitHub authorization code in callback.');
       return;
     }
 
@@ -588,20 +675,11 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         connectStatus: GitHubConnectStatus.connected,
         repositories: repos,
         selectedRepositoryFullName: preferredRepository,
-        statusMessage: repos.isEmpty
-            ? 'GitHub connected. No repositories found.'
-            : 'GitHub connected. Pick a repository to deploy.',
+        statusMessage: _githubConnectedMessage(repos),
       );
       _trackOAuthStage(GitHubOAuthStage.completed);
     } catch (error) {
-      await ref.read(gitHubSecretRepositoryProvider).clearAuthToken();
-      _pendingOauthState = null;
-      await preferences.setGitHubPendingOauthState(null);
-      _trackOAuthStage(GitHubOAuthStage.failed);
-      state = state.copyWith(
-        connectStatus: GitHubConnectStatus.error,
-        statusMessage: formatGitHubAuthError(error),
-      );
+      await _failOauth(formatGitHubAuthError(error), clearToken: true);
     }
   }
 
@@ -620,11 +698,9 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         final scopedState = _projectDeployState(scopedProjectId).copyWith(
           clearSelectedRepositoryFullName: true,
           deployStatus: deployRunning ? null : GitHubDeployStatus.idle,
-          deployTimeline: deployRunning ? null : const <String>[],
+          deployTimeline: deployRunning ? null : const [],
           clearSuggestedNextStep: !deployRunning,
-          statusMessage: state.repositories.isEmpty
-              ? 'GitHub connected. No repositories found.'
-              : 'GitHub connected. Pick a repository to deploy.',
+          statusMessage: _githubConnectedMessage(state.repositories),
         );
         _setProjectDeployState(
           projectId: scopedProjectId,
@@ -635,9 +711,7 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         );
         return;
       }
-      final connectedMessage = state.repositories.isEmpty
-          ? 'GitHub connected. No repositories found.'
-          : 'GitHub connected. Pick a repository to deploy.';
+      final connectedMessage = _githubConnectedMessage(state.repositories);
       state = state.copyWith(
         clearSelectedRepository: true,
         selectedRepositoryFullNameByProjectId: repositoryByProject,
@@ -656,7 +730,7 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         selectedRepositoryFullName: normalizedRepository,
         statusMessage: 'Repository selected: $normalizedRepository',
         deployStatus: deployRunning ? null : GitHubDeployStatus.idle,
-        deployTimeline: deployRunning ? null : const <String>[],
+        deployTimeline: deployRunning ? null : const [],
         clearSuggestedNextStep: !deployRunning,
       );
       _setProjectDeployState(
@@ -780,23 +854,610 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
     );
   }
 
-  // coverage-gate: deploy_selected_repository
-  Future<void> deploySelectedRepository({
+  /// One owner (D-26): lands a pre-run validation failure. Takes the
+  /// project/repo as parameters because validation runs before the
+  /// [_DeployRun] exists.
+  void _failDeployBeforeRun({
+    required Project? selectedProject,
+    required String? selectedRepo,
+    required String message,
+  }) {
+    if (selectedProject != null) {
+      _setProjectDeployState(
+        projectId: selectedProject.id,
+        mirrorToActiveDeploy: false,
+        projectState: _projectDeployState(selectedProject.id).copyWith(
+          selectedRepositoryFullName: selectedRepo,
+          deployStatus: GitHubDeployStatus.error,
+          statusMessage: message,
+          deployTimeline: const <String>[],
+          clearActiveRunId: true,
+          clearActiveRepositoryFullName: true,
+          clearActiveServerId: true,
+          clearActiveBranch: true,
+          clearActivePrimaryDomain: true,
+          clearStartedAt: true,
+          clearRepositoryHostKeyConfirmation: true,
+          clearFailureEvidence: true,
+          clearSuggestedNextStep: true,
+        ),
+      );
+    }
+    state = state.copyWith(
+      deployStatus: GitHubDeployStatus.error,
+      statusMessage: message,
+      clearFailureEvidence: true,
+      clearSuggestedNextStep: true,
+    );
+  }
+
+  /// One owner (D-26): writes one run-state update for [run], ignoring
+  /// stale runs.
+  void _updateDeployRunState(
+    _DeployRun run, {
+    GitHubDeployStatus? deployStatus,
+    String? statusMessage,
+    List<String>? deployTimelineOverride,
+    GitHubRepositoryHostKeyConfirmation? repositoryHostKeyConfirmation,
+    String? processReadinessStatus,
+    AppPublicHealthSnapshot? publicHealth,
+    DeployFailureEvidence? failureEvidence,
+    String? suggestedNextStep,
+    bool clearFailureEvidence = false,
+    bool clearSuggestedNextStep = false,
+    bool clearActiveRun = false,
+  }) {
+    if (!_isCurrentDeployRun(run.runContext)) {
+      return;
+    }
+    if (deployTimelineOverride != null) {
+      run.deployTimeline = List<String>.from(deployTimelineOverride);
+    }
+    final current = _projectDeployState(run.selectedProject.id);
+    _setProjectDeployState(
+      projectId: run.selectedProject.id,
+      mirrorToActiveDeploy: true,
+      projectState: current.copyWith(
+        selectedRepositoryFullName: run.selectedRepo,
+        deployStatus: deployStatus,
+        statusMessage: statusMessage,
+        deployTimeline: run.deployTimeline,
+        activeRunId: clearActiveRun ? null : run.runContext.runId,
+        activeRepositoryFullName: clearActiveRun ? null : run.selectedRepo,
+        activeServerId: clearActiveRun ? null : run.selectedServer.id,
+        activeBranch: clearActiveRun ? null : run.branch,
+        activePrimaryDomain: clearActiveRun ? null : run.primaryDomain,
+        startedAt: clearActiveRun ? null : run.deploymentStartedAt,
+        repositoryHostKeyConfirmation: repositoryHostKeyConfirmation,
+        processReadinessStatus: processReadinessStatus,
+        publicHealth: publicHealth,
+        failureEvidence: failureEvidence,
+        suggestedNextStep: suggestedNextStep,
+        clearFailureEvidence: clearFailureEvidence,
+        clearSuggestedNextStep: clearSuggestedNextStep,
+        clearActiveRunId: clearActiveRun,
+        clearActiveRepositoryFullName: clearActiveRun,
+        clearActiveServerId: clearActiveRun,
+        clearActiveBranch: clearActiveRun,
+        clearActivePrimaryDomain: clearActiveRun,
+        clearStartedAt: clearActiveRun,
+        clearRepositoryHostKeyConfirmation:
+            clearActiveRun && repositoryHostKeyConfirmation == null,
+      ),
+    );
+  }
+
+  /// One owner (D-26): appends one timeline line for [run], ignoring
+  /// stale runs and duplicate/noise lines.
+  void _appendDeployRunTimeline(
+    _DeployRun run,
+    String message, {
+    String eventType = '',
+  }) {
+    if (!_isCurrentDeployRun(run.runContext)) {
+      return;
+    }
+    if (!shouldAppendDeployTimelineLine(
+      run.deployTimeline,
+      message,
+      eventType: eventType,
+    )) {
+      return;
+    }
+    run.deployTimeline = [...run.deployTimeline, message.trim()];
+    _updateDeployRunState(run, deployTimelineOverride: run.deployTimeline);
+  }
+
+  /// Persists the first-deploy milestone so Home can offer the once-ever
+  /// telemetry nag. Best-effort: a timestamp write must never fail a
+  /// deploy that already succeeded.
+  Future<void> _recordFirstDeployMilestone() async {
+    try {
+      await ref
+          .read(appPreferencesRepositoryProvider)
+          .recordAnalyticsMilestone(AppUserAttribute.hasFirstDeploySucceeded);
+      await ref.read(telemetrySettingsProvider.notifier).refresh();
+    } on Exception catch (error) {
+      if (kDebugMode) {
+        debugPrint('First-deploy milestone skipped; the deploy stands: $error');
+      }
+    } on StateError catch (error) {
+      if (kDebugMode) {
+        debugPrint('First-deploy milestone skipped; the deploy stands: $error');
+      }
+    }
+  }
+
+  // coverage-gate: deploy_failure_analytics
+  /// Reports one deploy resolution. Single seam so the six outcome sites
+  /// funnelled through [_persistDeployOutcome] cannot drift onto different
+  /// providers or method spellings; success also records the first-deploy
+  /// activation attribute alongside the event.
+  void _trackDeployResolution(
+    bool success, {
+    Map<String, dynamic>? deployResult,
+    required int durationSeconds,
+    required String? normalizedProvider,
+    required String effectiveDomainRoutingMode,
+    required String? actorLabel,
+  }) {
+    final analytics = ref.read(appAnalyticsServiceProvider);
+    analytics.trackDeployEvent(
+      provider: deployProviderForName(normalizedProvider),
+      routingMode: effectiveDomainRoutingMode,
+      stage: deployStageForResult(success: success, deployResult: deployResult),
+      outcome: deployOutcomeForResult(
+        success: success,
+        deployResult: deployResult,
+      ),
+      durationSeconds: durationSeconds,
+    );
+    if (success) {
+      analytics.setUserAttribute(
+        AppUserAttribute.hasFirstDeploySucceeded,
+        'true',
+      );
+    } else {
+      final evidence = deployResult == null
+          ? null
+          : DeployFailureEvidence.fromEnvelope(deployResult);
+      analytics.trackDeployFailureEvidence(
+        phase: evidence?.phase ?? DeployFailurePhase.unknown,
+        source: evidence?.source ?? DeployFailureSource.none,
+        completeness:
+            evidence?.completeness ?? DeployFailureCompleteness.unavailable,
+        lineCount: evidence?.lines.length ?? 0,
+        agentInitiated: actorLabel == 'agent-mcp',
+      );
+    }
+  }
+  // end coverage-gate
+
+  /// One owner (D-26): persists one deploy outcome exactly once per run.
+  Future<void> _persistDeployOutcome(
+    _DeployRun run,
+    bool success, {
+    Map<String, dynamic>? deployResult,
+    required String? normalizedProvider,
+    required String effectiveDomainRoutingMode,
+    required String? actorLabel,
+  }) async {
+    if (run.outcomePersisted || !_isCurrentDeployRun(run.runContext)) {
+      return;
+    }
+    run.outcomePersisted = true;
+
+    final completedAt = DateTime.now();
+    final duration = completedAt.difference(run.deploymentStartedAt);
+    _trackDeployResolution(
+      success,
+      deployResult: deployResult,
+      durationSeconds: duration.inSeconds,
+      normalizedProvider: normalizedProvider,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+      actorLabel: actorLabel,
+    );
+    if (success) {
+      await _recordFirstDeployMilestone();
+    }
+    // `trimOrNull` is the repository's one owner for "trim it, and treat
+    // blank as absent", which is exactly what each of these asked for in
+    // six lines apiece.
+    final resolvedCommit =
+        trimOrNull(deployResult?['commit_sha']?.toString()) ??
+        extractCommitHashFromTimeline(run.deployTimeline) ??
+        'unknown';
+    final resolvedReleaseId = trimOrNull(
+      deployResult?['release_id']?.toString(),
+    );
+    final resolvedDeploymentKind =
+        trimOrNull(deployResult?['deployment_kind']?.toString()) ?? 'deploy';
+    final resolvedRollbackFromReleaseId = trimOrNull(
+      deployResult?['rollback_from_release_id']?.toString(),
+    );
+    final resolvedActor = trimOrNull(actorLabel) ?? localDeployActor();
+
+    if (deployResult != null) {
+      await _persistDeployReleaseResult(
+        projectId: run.selectedProject.id,
+        serverId: run.selectedServer.id,
+        deployResult: deployResult,
+      );
+    }
+
+    if (success) {
+      final processReadiness = deployResult?['process_readiness'];
+      final processStatus = processReadiness is Map
+          ? processReadiness['status']?.toString().trim()
+          : null;
+      final publicHealthPayload = deployResult?['public_health'];
+      final publicHealth = AppPublicHealthSnapshot.fromPayload(
+        publicHealthPayload is Map ? publicHealthPayload : null,
+      );
+      ref
+          .read(projectListProvider.notifier)
+          .updateLastDeployState(
+            projectId: run.selectedProject.id,
+            commit: resolvedCommit,
+            deployedAt: completedAt,
+          );
+      await ref
+          .read(appReleaseProvider.notifier)
+          .upsertRuntimeSnapshot(
+            AppRuntimeSnapshotRecord(
+              projectId: run.selectedProject.id,
+              serverId: run.selectedServer.id,
+              healthStatus: processStatus == 'ready' ? 'ready' : 'unknown',
+              publicHealthJson: publicHealth.encode(),
+              healthCheckedAt: completedAt.toUtc(),
+              updatedAt: completedAt.toUtc(),
+            ),
+          );
+    }
+
+    try {
+      await ref
+          .read(appDeploymentHistoryRepositoryProvider)
+          .append(
+            projectId: run.selectedProject.id,
+            status: success ? 'success' : 'failed',
+            releaseId: resolvedReleaseId,
+            deploymentKind: resolvedDeploymentKind,
+            rollbackFromReleaseId: resolvedRollbackFromReleaseId,
+            deployedAt: completedAt,
+            durationSeconds: duration.inSeconds,
+            actor: resolvedActor,
+            branch: run.branch,
+            commit: resolvedCommit,
+          );
+      if (!success &&
+          deployResult?['rollback_status'] == 'reverted_to_previous_live') {
+        final fallbackReleaseId = deployResult?['rollback_from_release_id']
+            ?.toString()
+            .trim();
+        await ref
+            .read(appDeploymentHistoryRepositoryProvider)
+            .append(
+              projectId: run.selectedProject.id,
+              status: 'success',
+              releaseId: fallbackReleaseId,
+              deploymentKind: 'auto_fallback',
+              rollbackFromReleaseId: resolvedReleaseId,
+              deployedAt: completedAt,
+              durationSeconds: duration.inSeconds,
+              actor: resolvedActor,
+              branch: run.branch,
+              commit: resolvedCommit,
+            );
+      }
+    } on StateError {
+      // Deployment history is supplementary local audit data; a disposed
+      // repository must not change the completed deployment result.
+    }
+    if (success) {
+      await _refreshDeploysPerWeekBucket();
+    }
+  }
+
+  /// One owner (D-26): reuses the stored deploy key or generates a fresh
+  /// one on the server.
+  Future<({String publicKey, String privateKey, bool reusedStoredKey})>
+  _acquireDeployKey(
+    _DeployRun run, {
+    required bool forceFreshKey,
+    required Map<String, dynamic> connection,
+    required Map<String, dynamic> baseSettings,
+    required void Function(int taskId, String phase)? onTaskStarted,
+    required String? normalizedProvider,
+    required String effectiveDomainRoutingMode,
+    required String? actorLabel,
+  }) async {
+    final secretRepo = ref.read(gitHubSecretRepositoryProvider);
+    final sshService = ref.read(sshServiceProvider);
+    if (!forceFreshKey) {
+      final storedKey = await secretRepo.readDeployKey(run.selectedRepo);
+      if (storedKey != null) {
+        run.deployTimeline = const ['Reuse locally stored deploy key'];
+        _updateDeployRunState(
+          run,
+          deployStatus: GitHubDeployStatus.generatingServerKey,
+          statusMessage: 'Using stored deploy key...',
+          deployTimelineOverride: run.deployTimeline,
+        );
+        _appendDeployRunTimeline(
+          run,
+          'Using existing local deploy key for ${run.selectedRepo}',
+        );
+        return (
+          publicKey: storedKey.publicKey,
+          privateKey: storedKey.privateKey,
+          reusedStoredKey: true,
+        );
+      }
+    }
+
+    run.deployTimeline = forceFreshKey
+        ? [...run.deployTimeline, 'Generate fresh deploy key on server']
+        : const ['Generate SSH deploy key on server'];
+    _updateDeployRunState(
+      run,
+      deployStatus: GitHubDeployStatus.generatingServerKey,
+      statusMessage: 'Generating deploy key on server...',
+      deployTimelineOverride: run.deployTimeline,
+    );
+
+    final prepareOutcome = await sshService.runWorkflow(
+      workflowId: 'app',
+      operationId: 'prepare_key',
+      connection: connection,
+      params: {'dry_run': false, 'settings': baseSettings},
+      onTaskStarted: (taskId) => onTaskStarted?.call(taskId, 'prepare_key'),
+      onEvent: (event) {
+        final type = event['type']?.toString().trim() ?? '';
+        final message = event['message']?.toString().trim();
+        if (message == null || message.isEmpty) {
+          return;
+        }
+        _appendDeployRunTimeline(run, message, eventType: type);
+      },
+    );
+    final prepareEvidence = _deployFailureEvidenceFromResult(prepareOutcome);
+    final prepareResult = prepareOutcome.diagnosticPayload;
+    if (!_isCurrentDeployRun(run.runContext)) {
+      throw _AbortDeploymentException();
+    }
+    if (prepareResult['status'] != 'success') {
+      await _persistDeployOutcome(
+        run,
+        false,
+        deployResult: prepareResult,
+        normalizedProvider: normalizedProvider,
+        effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+        actorLabel: actorLabel,
+      );
+      _updateDeployRunState(
+        run,
+        deployStatus: GitHubDeployStatus.error,
+        statusMessage:
+            prepareResult['msg']?.toString() ??
+            'Failed preparing deploy key on server.',
+        failureEvidence: prepareEvidence,
+        clearFailureEvidence: prepareEvidence == null,
+        clearSuggestedNextStep: true,
+        clearActiveRun: true,
+      );
+      throw _AbortDeploymentException();
+    }
+
+    final preparedPublicKey = prepareResult['deploy_public_key']?.toString();
+    final preparedPrivateKey = prepareResult['deploy_private_key']?.toString();
+    if (preparedPublicKey == null ||
+        preparedPublicKey.trim().isEmpty ||
+        preparedPrivateKey == null ||
+        preparedPrivateKey.trim().isEmpty) {
+      await _persistDeployOutcome(
+        run,
+        false,
+        normalizedProvider: normalizedProvider,
+        effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+        actorLabel: actorLabel,
+      );
+      _updateDeployRunState(
+        run,
+        deployStatus: GitHubDeployStatus.error,
+        statusMessage:
+            'Server deploy key prepared, but key material was incomplete.',
+        clearFailureEvidence: true,
+        clearSuggestedNextStep: true,
+        clearActiveRun: true,
+      );
+      throw _AbortDeploymentException();
+    }
+
+    final deployPublicKey = preparedPublicKey.trim();
+    final deployPrivateKey = preparedPrivateKey.trim();
+    await secretRepo.saveDeployKey(
+      repositoryFullName: run.selectedRepo,
+      publicKey: deployPublicKey,
+      privateKey: deployPrivateKey,
+    );
+
+    _appendDeployRunTimeline(
+      run,
+      'Copied deploy key to local secure store and wiped it from server',
+    );
+    return (
+      publicKey: deployPublicKey,
+      privateKey: deployPrivateKey,
+      reusedStoredKey: false,
+    );
+  }
+
+  /// One owner (D-26): registers the deploy key with GitHub.
+  Future<void> _registerDeployKey(
+    _DeployRun run,
+    String publicKey, {
+    required String token,
+  }) async {
+    final gateway = ref.read(gitHubAuthGatewayProvider);
+    final delay = ref.read(gitHubInteractionStepDelayProvider);
+    run.deployTimeline = [
+      ...run.deployTimeline,
+      'Register local public key as GitHub Deploy Key (read-only)',
+    ];
+    _updateDeployRunState(
+      run,
+      deployStatus: GitHubDeployStatus.registeringDeployKey,
+      statusMessage: 'Registering deploy key with GitHub...',
+      deployTimelineOverride: run.deployTimeline,
+    );
+
+    await gateway.registerDeployKey(
+      accessToken: token,
+      repositoryFullName: run.selectedRepo,
+      publicKey: publicKey,
+    );
+    await Future<void>.delayed(delay);
+    if (!_isCurrentDeployRun(run.runContext)) {
+      throw _AbortDeploymentException();
+    }
+  }
+
+  /// One owner (D-26): runs the deployment with the deploy key and journals
+  /// the attempt.
+  Future<Map<String, dynamic>> _runDeploymentWithKey(
+    _DeployRun run,
+    String privateKey, {
+    required Map<String, dynamic> connection,
+    required Map<String, dynamic> baseSettings,
+    required Map<String, String> runtimeEnv,
+    required String? repositoryHostKeyPolicy,
+    required String? acceptedRepositoryHostKeyFingerprint,
+    required int appPort,
+    required String effectiveDomainRoutingMode,
+    required String? normalizedProvider,
+    required void Function(int taskId, String phase)? onTaskStarted,
+  }) async {
+    final sshService = ref.read(sshServiceProvider);
+    run.deployTimeline = [
+      ...run.deployTimeline,
+      'Clone ${run.selectedRepo} using runtime-injected deploy key',
+    ];
+    _updateDeployRunState(
+      run,
+      deployStatus: GitHubDeployStatus.cloningRepository,
+      statusMessage: 'Cloning repository on server...',
+      deployTimelineOverride: run.deployTimeline,
+    );
+    run.deployTimeline = [
+      ...run.deployTimeline,
+      if (runtimeEnv.isNotEmpty)
+        'Apply ${runtimeEnv.length} app runtime env vars to container',
+      'Build image and publish through Caddy',
+    ];
+    _updateDeployRunState(
+      run,
+      deployStatus: GitHubDeployStatus.buildingRelease,
+      statusMessage: 'Running web app build and deployment on server...',
+      deployTimelineOverride: run.deployTimeline,
+    );
+    final deploymentSettings = <String, dynamic>{
+      ...baseSettings,
+      'deploy_private_key': privateKey,
+      ...?(repositoryHostKeyPolicy == null
+          ? null
+          : {'repository_host_key_policy': repositoryHostKeyPolicy}),
+      ...?(acceptedRepositoryHostKeyFingerprint == null
+          ? null
+          : {
+              'accepted_repository_host_key_fingerprint':
+                  acceptedRepositoryHostKeyFingerprint,
+            }),
+    };
+    final journalRepository = ref.read(appReleaseRepositoryProvider);
+    final journal = await journalRepository.createJournalEntry(
+      projectId: run.selectedProject.id,
+      serverId: run.selectedServer.id,
+      surface: 'app',
+      operationType: 'run',
+      request: <String, dynamic>{
+        'workflow_id': 'app',
+        'operation_id': 'run',
+        'repository': run.selectedRepo,
+        'branch': run.branch,
+        'app_port': appPort,
+        'domain_routing_mode': effectiveDomainRoutingMode,
+        'railpack_provider': normalizedProvider,
+        'runtime_env_count': runtimeEnv.length,
+      },
+    );
+    run.latestDeployJournal = journal;
+    Map<String, dynamic> result;
+    try {
+      final outcome = await sshService.runWorkflow(
+        workflowId: 'app',
+        operationId: 'run',
+        connection: connection,
+        params: {'dry_run': false, 'settings': deploymentSettings},
+        onTaskStarted: (taskId) => onTaskStarted?.call(taskId, 'run'),
+        onEvent: (event) {
+          final type = event['type']?.toString().trim() ?? '';
+          final message = event['message']?.toString().trim();
+          if (message == null || message.isEmpty) {
+            return;
+          }
+          _appendDeployRunTimeline(run, message, eventType: type);
+        },
+      );
+      run.latestDeployFailureEvidence = _deployFailureEvidenceFromResult(
+        outcome,
+      );
+      result = outcome.diagnosticPayload;
+    } catch (error) {
+      run.latestDeployFailureEvidence = null;
+      await journalRepository.updateJournalStatus(
+        id: journal.id,
+        status: 'failed',
+        errorMessage: error.toString(),
+      );
+      rethrow;
+    }
+    if (result['status'] == 'success') {
+      await journalRepository.updateJournalStatus(
+        id: journal.id,
+        status: 'remote_success',
+        result: result,
+      );
+    } else {
+      await journalRepository.updateJournalStatus(
+        id: journal.id,
+        status: 'failed',
+        result: result,
+        errorMessage: result['msg']?.toString(),
+      );
+    }
+    if (!_isCurrentDeployRun(run.runContext)) {
+      throw _AbortDeploymentException();
+    }
+    return result;
+  }
+
+  /// One owner (D-26): resolves and validates every deploy input,
+  /// returning null when validation already failed the run.
+  Future<_DeployRunInputs?> _resolveDeployRunInputs({
+    required String? repositoryFullName,
     required String primaryDomain,
     required String branch,
     required int appPort,
-    String? repositoryFullName,
-    String? domainRoutingMode,
-    String? railpackBuildCommand,
-    String? railpackRunCommand,
-    String? railpackProvider,
-    String? appSubdirectory,
-    String? repositoryHostKeyPolicy,
-    String? acceptedRepositoryHostKeyFingerprint,
-    Server? selectedServerOverride,
-    Project? selectedProjectOverride,
-    String? actorLabel,
-    void Function(int taskId, String phase)? onTaskStarted,
+    required String? domainRoutingMode,
+    required String? railpackBuildCommand,
+    required String? railpackRunCommand,
+    required String? railpackProvider,
+    required String? appSubdirectory,
+    required Server? selectedServerOverride,
+    required Project? selectedProjectOverride,
+    required String? actorLabel,
+    required String? repositoryHostKeyPolicy,
   }) async {
     final token =
         state.authToken ??
@@ -810,36 +1471,6 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         normalizedRepository == null || normalizedRepository.isEmpty
         ? state.selectedRepositoryForProject(selectedProject?.id)
         : normalizedRepository;
-
-    void failBeforeRun(String message) {
-      if (selectedProject != null) {
-        _setProjectDeployState(
-          projectId: selectedProject.id,
-          mirrorToActiveDeploy: false,
-          projectState: _projectDeployState(selectedProject.id).copyWith(
-            selectedRepositoryFullName: selectedRepo,
-            deployStatus: GitHubDeployStatus.error,
-            statusMessage: message,
-            deployTimeline: const <String>[],
-            clearActiveRunId: true,
-            clearActiveRepositoryFullName: true,
-            clearActiveServerId: true,
-            clearActiveBranch: true,
-            clearActivePrimaryDomain: true,
-            clearStartedAt: true,
-            clearRepositoryHostKeyConfirmation: true,
-            clearFailureEvidence: true,
-            clearSuggestedNextStep: true,
-          ),
-        );
-      }
-      state = state.copyWith(
-        deployStatus: GitHubDeployStatus.error,
-        statusMessage: message,
-        clearFailureEvidence: true,
-        clearSuggestedNextStep: true,
-      );
-    }
 
     if (normalizedRepository != null && normalizedRepository.isNotEmpty) {
       final repositoryByProject = Map<String, String>.from(
@@ -864,38 +1495,64 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
           .trackControlUsed(control: AppControl.deployPressed);
     }
     if (selectedRepo == null || token == null) {
-      failBeforeRun('Connect GitHub and select a repository before deploying.');
-      return;
+      _failDeployBeforeRun(
+        selectedProject: selectedProject,
+        selectedRepo: selectedRepo,
+        message: 'Connect GitHub and select a repository before deploying.',
+      );
+      return null;
     }
     if (!_isValidDomain(primaryDomain)) {
-      failBeforeRun(
-        'Primary domain is required and must be a valid FQDN before deploy.',
+      _failDeployBeforeRun(
+        selectedProject: selectedProject,
+        selectedRepo: selectedRepo,
+        message:
+            'Primary domain is required and must be a valid FQDN before deploy.',
       );
-      return;
+      return null;
     }
     if (!_isValidBranch(branch)) {
-      failBeforeRun('Branch name is invalid.');
-      return;
+      _failDeployBeforeRun(
+        selectedProject: selectedProject,
+        selectedRepo: selectedRepo,
+        message: 'Branch name is invalid.',
+      );
+      return null;
     }
     if (appPort < 1 || appPort > 65535) {
-      failBeforeRun('Web app port must be between 1 and 65535.');
-      return;
+      _failDeployBeforeRun(
+        selectedProject: selectedProject,
+        selectedRepo: selectedRepo,
+        message: 'Web app port must be between 1 and 65535.',
+      );
+      return null;
     }
     if (selectedServer == null) {
-      failBeforeRun('No active server selected for deploy.');
-      return;
+      _failDeployBeforeRun(
+        selectedProject: selectedProject,
+        selectedRepo: selectedRepo,
+        message: 'No active server selected for deploy.',
+      );
+      return null;
     }
     if (selectedProject == null) {
-      failBeforeRun('No project selected for deploy.');
-      return;
+      _failDeployBeforeRun(
+        selectedProject: selectedProject,
+        selectedRepo: selectedRepo,
+        message: 'No project selected for deploy.',
+      );
+      return null;
     }
 
     final connection = await _buildConnectionPayload(selectedServer);
     if (connection == null) {
-      failBeforeRun(
-        'Selected server credentials are incomplete. Reconnect server first.',
+      _failDeployBeforeRun(
+        selectedProject: selectedProject,
+        selectedRepo: selectedRepo,
+        message:
+            'Selected server credentials are incomplete. Reconnect server first.',
       );
-      return;
+      return null;
     }
     final normalizedBuildCommand = railpackBuildCommand?.trim();
     final normalizedRunCommand = railpackRunCommand?.trim();
@@ -912,20 +1569,50 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         : normalizedRunCommand;
     final includeBuildCommand = effectiveBuildCommand.isNotEmpty;
     final includeRunCommand = effectiveRunCommand.isNotEmpty;
-    final effectiveAppSubdirectory = _normalizeAppSubdirectory(
+    final effectiveAppSubdirectory = normalizeAppSubdirectory(
       appSubdirectory ?? selectedProject.appSubdirectory,
+      invalidValue: _invalidAppSubdirectory,
     );
     if (effectiveAppSubdirectory == _invalidAppSubdirectory) {
-      failBeforeRun(
-        'App subdirectory is invalid. Use a relative path like "website".',
+      _failDeployBeforeRun(
+        selectedProject: selectedProject,
+        selectedRepo: selectedRepo,
+        message:
+            'App subdirectory is invalid. Use a relative path like "website".',
       );
-      return;
+      return null;
     }
 
     final effectiveDomainRoutingMode =
         domainRoutingMode == null || domainRoutingMode.trim().isEmpty
         ? selectedProject.domainRoutingMode
         : domainRoutingMode.trim().toLowerCase();
+    return _DeployRunInputs(
+      token: token,
+      selectedServer: selectedServer,
+      selectedProject: selectedProject,
+      selectedRepo: selectedRepo,
+      connection: connection,
+      normalizedProvider: normalizedProvider,
+      effectiveBuildCommand: effectiveBuildCommand,
+      effectiveRunCommand: effectiveRunCommand,
+      includeBuildCommand: includeBuildCommand,
+      includeRunCommand: includeRunCommand,
+      effectiveAppSubdirectory: effectiveAppSubdirectory,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+    );
+  }
+
+  /// One owner (D-26): builds the [_DeployRun] and writes the initial
+  /// run state. Returns the run the rest of the deploy threads through.
+  _DeployRun _beginDeployRun({
+    required Project selectedProject,
+    required Server selectedServer,
+    required String selectedRepo,
+    required String branch,
+    required String primaryDomain,
+    required String? repositoryHostKeyPolicy,
+  }) {
     final deploymentStartedAt = DateTime.now();
     final runContext = _GitHubDeployRunContext(
       run: WorkspaceRunContext(
@@ -947,75 +1634,15 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
       primaryDomain: primaryDomain,
       startedAt: deploymentStartedAt,
     );
-    var deployTimeline = <String>[];
-    void updateRunState({
-      GitHubDeployStatus? deployStatus,
-      String? statusMessage,
-      List<String>? deployTimelineOverride,
-      GitHubRepositoryHostKeyConfirmation? repositoryHostKeyConfirmation,
-      String? processReadinessStatus,
-      AppPublicHealthSnapshot? publicHealth,
-      DeployFailureEvidence? failureEvidence,
-      String? suggestedNextStep,
-      bool clearFailureEvidence = false,
-      bool clearSuggestedNextStep = false,
-      bool clearActiveRun = false,
-    }) {
-      if (!_isCurrentDeployRun(runContext)) {
-        return;
-      }
-      if (deployTimelineOverride != null) {
-        deployTimeline = List<String>.from(deployTimelineOverride);
-      }
-      final current = _projectDeployState(selectedProject.id);
-      _setProjectDeployState(
-        projectId: selectedProject.id,
-        mirrorToActiveDeploy: true,
-        projectState: current.copyWith(
-          selectedRepositoryFullName: selectedRepo,
-          deployStatus: deployStatus,
-          statusMessage: statusMessage,
-          deployTimeline: deployTimeline,
-          activeRunId: clearActiveRun ? null : runContext.runId,
-          activeRepositoryFullName: clearActiveRun ? null : selectedRepo,
-          activeServerId: clearActiveRun ? null : selectedServer.id,
-          activeBranch: clearActiveRun ? null : branch,
-          activePrimaryDomain: clearActiveRun ? null : primaryDomain,
-          startedAt: clearActiveRun ? null : deploymentStartedAt,
-          repositoryHostKeyConfirmation: repositoryHostKeyConfirmation,
-          processReadinessStatus: processReadinessStatus,
-          publicHealth: publicHealth,
-          failureEvidence: failureEvidence,
-          suggestedNextStep: suggestedNextStep,
-          clearFailureEvidence: clearFailureEvidence,
-          clearSuggestedNextStep: clearSuggestedNextStep,
-          clearActiveRunId: clearActiveRun,
-          clearActiveRepositoryFullName: clearActiveRun,
-          clearActiveServerId: clearActiveRun,
-          clearActiveBranch: clearActiveRun,
-          clearActivePrimaryDomain: clearActiveRun,
-          clearStartedAt: clearActiveRun,
-          clearRepositoryHostKeyConfirmation:
-              clearActiveRun && repositoryHostKeyConfirmation == null,
-        ),
-      );
-    }
-
-    void appendRunTimeline(String message, {String eventType = ''}) {
-      if (!_isCurrentDeployRun(runContext)) {
-        return;
-      }
-      if (!shouldAppendDeployTimelineLine(
-        deployTimeline,
-        message,
-        eventType: eventType,
-      )) {
-        return;
-      }
-      deployTimeline = [...deployTimeline, message.trim()];
-      updateRunState(deployTimelineOverride: deployTimeline);
-    }
-
+    final run = _DeployRun(
+      runContext: runContext,
+      selectedProject: selectedProject,
+      selectedServer: selectedServer,
+      selectedRepo: selectedRepo,
+      branch: branch,
+      primaryDomain: primaryDomain,
+      deploymentStartedAt: deploymentStartedAt,
+    );
     state = state.copyWith(
       activeDeployProjectId: selectedProject.id,
       activeDeployRepositoryFullName: selectedRepo,
@@ -1042,195 +1669,23 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
         clearSuggestedNextStep: true,
       ),
     );
-    var outcomePersisted = false;
+    return run;
+  }
 
-    // Reports one deploy resolution. Single seam so the six outcome sites
-    // funnelled through [persistDeployOutcome] cannot drift onto different
-    // providers or method spellings; success also records the first-deploy
-    // activation attribute alongside the event.
-    // Persists the first-deploy milestone so Home can offer the once-ever
-    // telemetry nag. Best-effort: a timestamp write must never fail a
-    // deploy that already succeeded.
-    Future<void> recordFirstDeployMilestone() async {
-      try {
-        await ref
-            .read(appPreferencesRepositoryProvider)
-            .recordAnalyticsMilestone(AppUserAttribute.hasFirstDeploySucceeded);
-        await ref.read(telemetrySettingsProvider.notifier).refresh();
-      } on Exception catch (error) {
-        if (kDebugMode) {
-          debugPrint(
-            'First-deploy milestone skipped; the deploy stands: $error',
-          );
-        }
-      } on StateError catch (error) {
-        if (kDebugMode) {
-          debugPrint(
-            'First-deploy milestone skipped; the deploy stands: $error',
-          );
-        }
-      }
-    }
-
-    // coverage-gate: deploy_failure_analytics
-    void trackDeployResolution(
-      bool success, {
-      Map<String, dynamic>? deployResult,
-      required int durationSeconds,
-    }) {
-      final analytics = ref.read(appAnalyticsServiceProvider);
-      analytics.trackDeployEvent(
-        provider: deployProviderForName(normalizedProvider),
-        routingMode: effectiveDomainRoutingMode,
-        stage: deployStageForResult(
-          success: success,
-          deployResult: deployResult,
-        ),
-        outcome: deployOutcomeForResult(
-          success: success,
-          deployResult: deployResult,
-        ),
-        durationSeconds: durationSeconds,
-      );
-      if (success) {
-        analytics.setUserAttribute(
-          AppUserAttribute.hasFirstDeploySucceeded,
-          'true',
-        );
-      } else {
-        final evidence = deployResult == null
-            ? null
-            : DeployFailureEvidence.fromEnvelope(deployResult);
-        analytics.trackDeployFailureEvidence(
-          phase: evidence?.phase ?? DeployFailurePhase.unknown,
-          source: evidence?.source ?? DeployFailureSource.none,
-          completeness:
-              evidence?.completeness ?? DeployFailureCompleteness.unavailable,
-          lineCount: evidence?.lines.length ?? 0,
-          agentInitiated: actorLabel == 'agent-mcp',
-        );
-      }
-    }
-    // end coverage-gate
-
-    Future<void> persistDeployOutcome(
-      bool success, {
-      Map<String, dynamic>? deployResult,
-    }) async {
-      if (outcomePersisted || !_isCurrentDeployRun(runContext)) {
-        return;
-      }
-      outcomePersisted = true;
-
-      final completedAt = DateTime.now();
-      final duration = completedAt.difference(deploymentStartedAt);
-      trackDeployResolution(
-        success,
-        deployResult: deployResult,
-        durationSeconds: duration.inSeconds,
-      );
-      if (success) {
-        await recordFirstDeployMilestone();
-      }
-      // `trimOrNull` is the repository's one owner for "trim it, and treat
-      // blank as absent", which is exactly what each of these asked for in
-      // six lines apiece.
-      final resolvedCommit =
-          trimOrNull(deployResult?['commit_sha']?.toString()) ??
-          extractCommitHashFromTimeline(deployTimeline) ??
-          'unknown';
-      final resolvedReleaseId = trimOrNull(
-        deployResult?['release_id']?.toString(),
-      );
-      final resolvedDeploymentKind =
-          trimOrNull(deployResult?['deployment_kind']?.toString()) ?? 'deploy';
-      final resolvedRollbackFromReleaseId = trimOrNull(
-        deployResult?['rollback_from_release_id']?.toString(),
-      );
-      final resolvedActor = trimOrNull(actorLabel) ?? localDeployActor();
-
-      if (deployResult != null) {
-        await _persistDeployReleaseResult(
-          projectId: selectedProject.id,
-          serverId: selectedServer.id,
-          deployResult: deployResult,
-        );
-      }
-
-      if (success) {
-        final processReadiness = deployResult?['process_readiness'];
-        final processStatus = processReadiness is Map
-            ? processReadiness['status']?.toString().trim()
-            : null;
-        final publicHealthPayload = deployResult?['public_health'];
-        final publicHealth = AppPublicHealthSnapshot.fromPayload(
-          publicHealthPayload is Map ? publicHealthPayload : null,
-        );
-        ref
-            .read(projectListProvider.notifier)
-            .updateLastDeployState(
-              projectId: selectedProject.id,
-              commit: resolvedCommit,
-              deployedAt: completedAt,
-            );
-        await ref
-            .read(appReleaseProvider.notifier)
-            .upsertRuntimeSnapshot(
-              AppRuntimeSnapshotRecord(
-                projectId: selectedProject.id,
-                serverId: selectedServer.id,
-                healthStatus: processStatus == 'ready' ? 'ready' : 'unknown',
-                publicHealthJson: publicHealth.encode(),
-                healthCheckedAt: completedAt.toUtc(),
-                updatedAt: completedAt.toUtc(),
-              ),
-            );
-      }
-
-      try {
-        await ref
-            .read(appDeploymentHistoryRepositoryProvider)
-            .append(
-              projectId: selectedProject.id,
-              status: success ? 'success' : 'failed',
-              releaseId: resolvedReleaseId,
-              deploymentKind: resolvedDeploymentKind,
-              rollbackFromReleaseId: resolvedRollbackFromReleaseId,
-              deployedAt: completedAt,
-              durationSeconds: duration.inSeconds,
-              actor: resolvedActor,
-              branch: branch,
-              commit: resolvedCommit,
-            );
-        if (!success &&
-            deployResult?['rollback_status'] == 'reverted_to_previous_live') {
-          final fallbackReleaseId = deployResult?['rollback_from_release_id']
-              ?.toString()
-              .trim();
-          await ref
-              .read(appDeploymentHistoryRepositoryProvider)
-              .append(
-                projectId: selectedProject.id,
-                status: 'success',
-                releaseId: fallbackReleaseId,
-                deploymentKind: 'auto_fallback',
-                rollbackFromReleaseId: resolvedReleaseId,
-                deployedAt: completedAt,
-                durationSeconds: duration.inSeconds,
-                actor: resolvedActor,
-                branch: branch,
-                commit: resolvedCommit,
-              );
-        }
-      } on StateError {
-        // Deployment history is supplementary local audit data; a disposed
-        // repository must not change the completed deployment result.
-      }
-      if (success) {
-        await _refreshDeploysPerWeekBucket();
-      }
-    }
-
+  /// One owner (D-26): persists the resolved deployment configuration
+  /// before the run starts mutating server state.
+  void _persistDeployConfiguration({
+    required Project selectedProject,
+    required String selectedRepo,
+    required String primaryDomain,
+    required String effectiveDomainRoutingMode,
+    required String? effectiveAppSubdirectory,
+    required String branch,
+    required int appPort,
+    required String? normalizedProvider,
+    required String effectiveBuildCommand,
+    required String effectiveRunCommand,
+  }) {
     ref
         .read(projectListProvider.notifier)
         .updateDeploymentConfig(
@@ -1255,11 +1710,24 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
           railpackBuildCommand: effectiveBuildCommand,
           railpackRunCommand: effectiveRunCommand,
         );
+  }
 
-    final delay = ref.read(gitHubInteractionStepDelayProvider);
-    final gateway = ref.read(gitHubAuthGatewayProvider);
-    final secretRepo = ref.read(gitHubSecretRepositoryProvider);
-    final sshService = ref.read(sshServiceProvider);
+  /// One owner (D-26): resolves the SQLite/env/trust inputs and assembles
+  /// the settings payload the attempt loop consumes.
+  Future<_DeploySettings> _buildDeploySettings({
+    required Project selectedProject,
+    required String selectedRepo,
+    required String branch,
+    required String primaryDomain,
+    required String effectiveDomainRoutingMode,
+    required int appPort,
+    required String? normalizedProvider,
+    required bool includeBuildCommand,
+    required String effectiveBuildCommand,
+    required bool includeRunCommand,
+    required String effectiveRunCommand,
+    required String? effectiveAppSubdirectory,
+  }) async {
     final projectSlug = slugifyProjectName(
       selectedProject.name,
       fallback: 'project-app',
@@ -1354,429 +1822,471 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
     if (effectiveAppSubdirectory != null) {
       baseSettings['app_subdirectory'] = effectiveAppSubdirectory;
     }
+    return _DeploySettings(baseSettings: baseSettings, runtimeEnv: runtimeEnv);
+  }
 
-    try {
-      Future<({String publicKey, String privateKey, bool reusedStoredKey})>
-      acquireDeployKey({required bool forceFreshKey}) async {
-        if (!forceFreshKey) {
-          final storedKey = await secretRepo.readDeployKey(selectedRepo);
-          if (storedKey != null) {
-            deployTimeline = const ['Reuse locally stored deploy key'];
-            updateRunState(
-              deployStatus: GitHubDeployStatus.generatingServerKey,
-              statusMessage: 'Using stored deploy key...',
-              deployTimelineOverride: deployTimeline,
-            );
-            appendRunTimeline(
-              'Using existing local deploy key for $selectedRepo',
-            );
-            return (
-              publicKey: storedKey.publicKey,
-              privateKey: storedKey.privateKey,
-              reusedStoredKey: true,
-            );
-          }
-        }
-
-        deployTimeline = forceFreshKey
-            ? [...deployTimeline, 'Generate fresh deploy key on server']
-            : const ['Generate SSH deploy key on server'];
-        updateRunState(
-          deployStatus: GitHubDeployStatus.generatingServerKey,
-          statusMessage: 'Generating deploy key on server...',
-          deployTimelineOverride: deployTimeline,
-        );
-
-        final prepareOutcome = await sshService.runWorkflow(
-          workflowId: 'app',
-          operationId: 'prepare_key',
-          connection: connection,
-          params: {'dry_run': false, 'settings': baseSettings},
-          onTaskStarted: (taskId) => onTaskStarted?.call(taskId, 'prepare_key'),
-          onEvent: (event) {
-            final type = event['type']?.toString().trim() ?? '';
-            final message = event['message']?.toString().trim();
-            if (message == null || message.isEmpty) {
-              return;
-            }
-            appendRunTimeline(message, eventType: type);
-          },
-        );
-        final prepareEvidence = _deployFailureEvidenceFromResult(
-          prepareOutcome,
-        );
-        final prepareResult = prepareOutcome.diagnosticPayload;
-        if (!_isCurrentDeployRun(runContext)) {
-          throw _AbortDeploymentException();
-        }
-        if (prepareResult['status'] != 'success') {
-          await persistDeployOutcome(false, deployResult: prepareResult);
-          updateRunState(
-            deployStatus: GitHubDeployStatus.error,
-            statusMessage:
-                prepareResult['msg']?.toString() ??
-                'Failed preparing deploy key on server.',
-            failureEvidence: prepareEvidence,
-            clearFailureEvidence: prepareEvidence == null,
-            clearSuggestedNextStep: true,
-            clearActiveRun: true,
-          );
-          throw _AbortDeploymentException();
-        }
-
-        final preparedPublicKey = prepareResult['deploy_public_key']
-            ?.toString();
-        final preparedPrivateKey = prepareResult['deploy_private_key']
-            ?.toString();
-        if (preparedPublicKey == null ||
-            preparedPublicKey.trim().isEmpty ||
-            preparedPrivateKey == null ||
-            preparedPrivateKey.trim().isEmpty) {
-          await persistDeployOutcome(false);
-          updateRunState(
-            deployStatus: GitHubDeployStatus.error,
-            statusMessage:
-                'Server deploy key prepared, but key material was incomplete.',
-            clearFailureEvidence: true,
-            clearSuggestedNextStep: true,
-            clearActiveRun: true,
-          );
-          throw _AbortDeploymentException();
-        }
-
-        final deployPublicKey = preparedPublicKey.trim();
-        final deployPrivateKey = preparedPrivateKey.trim();
-        await secretRepo.saveDeployKey(
-          repositoryFullName: selectedRepo,
-          publicKey: deployPublicKey,
-          privateKey: deployPrivateKey,
-        );
-
-        appendRunTimeline(
-          'Copied deploy key to local secure store and wiped it from server',
-        );
-        return (
-          publicKey: deployPublicKey,
-          privateKey: deployPrivateKey,
-          reusedStoredKey: false,
-        );
-      }
-
-      Future<void> registerDeployKey(String publicKey) async {
-        deployTimeline = [
-          ...deployTimeline,
-          'Register local public key as GitHub Deploy Key (read-only)',
-        ];
-        updateRunState(
-          deployStatus: GitHubDeployStatus.registeringDeployKey,
-          statusMessage: 'Registering deploy key with GitHub...',
-          deployTimelineOverride: deployTimeline,
-        );
-
-        await gateway.registerDeployKey(
-          accessToken: token,
-          repositoryFullName: selectedRepo,
-          publicKey: publicKey,
-        );
-        await Future<void>.delayed(delay);
-        if (!_isCurrentDeployRun(runContext)) {
-          throw _AbortDeploymentException();
-        }
-      }
-
-      late ProjectManagedOperationJournalRecord latestDeployJournal;
-      DeployFailureEvidence? latestDeployFailureEvidence;
-
-      Future<Map<String, dynamic>> runDeploymentWithKey(
-        String privateKey,
-      ) async {
-        deployTimeline = [
-          ...deployTimeline,
-          'Clone $selectedRepo using runtime-injected deploy key',
-        ];
-        updateRunState(
-          deployStatus: GitHubDeployStatus.cloningRepository,
-          statusMessage: 'Cloning repository on server...',
-          deployTimelineOverride: deployTimeline,
-        );
-        deployTimeline = [
-          ...deployTimeline,
-          if (runtimeEnv.isNotEmpty)
-            'Apply ${runtimeEnv.length} app runtime env vars to container',
-          'Build image and publish through Caddy',
-        ];
-        updateRunState(
-          deployStatus: GitHubDeployStatus.buildingRelease,
-          statusMessage: 'Running web app build and deployment on server...',
-          deployTimelineOverride: deployTimeline,
-        );
-        final deploymentSettings = <String, dynamic>{
-          ...baseSettings,
-          'deploy_private_key': privateKey,
-          ...?(repositoryHostKeyPolicy == null
-              ? null
-              : {'repository_host_key_policy': repositoryHostKeyPolicy}),
-          ...?(acceptedRepositoryHostKeyFingerprint == null
-              ? null
-              : {
-                  'accepted_repository_host_key_fingerprint':
-                      acceptedRepositoryHostKeyFingerprint,
-                }),
-        };
-        final journalRepository = ref.read(appReleaseRepositoryProvider);
-        final journal = await journalRepository.createJournalEntry(
-          projectId: selectedProject.id,
-          serverId: selectedServer.id,
-          surface: 'app',
-          operationType: 'run',
-          request: <String, dynamic>{
-            'workflow_id': 'app',
-            'operation_id': 'run',
-            'repository': selectedRepo,
-            'branch': branch,
-            'app_port': appPort,
-            'domain_routing_mode': effectiveDomainRoutingMode,
-            'railpack_provider': normalizedProvider,
-            'runtime_env_count': runtimeEnv.length,
-          },
-        );
-        latestDeployJournal = journal;
-        Map<String, dynamic> result;
-        try {
-          final outcome = await sshService.runWorkflow(
-            workflowId: 'app',
-            operationId: 'run',
-            connection: connection,
-            params: {'dry_run': false, 'settings': deploymentSettings},
-            onTaskStarted: (taskId) => onTaskStarted?.call(taskId, 'run'),
-            onEvent: (event) {
-              final type = event['type']?.toString().trim() ?? '';
-              final message = event['message']?.toString().trim();
-              if (message == null || message.isEmpty) {
-                return;
-              }
-              appendRunTimeline(message, eventType: type);
-            },
-          );
-          latestDeployFailureEvidence = _deployFailureEvidenceFromResult(
-            outcome,
-          );
-          result = outcome.diagnosticPayload;
-        } catch (error) {
-          latestDeployFailureEvidence = null;
-          await journalRepository.updateJournalStatus(
-            id: journal.id,
-            status: 'failed',
-            errorMessage: error.toString(),
-          );
-          rethrow;
-        }
-        if (result['status'] == 'success') {
-          await journalRepository.updateJournalStatus(
-            id: journal.id,
-            status: 'remote_success',
-            result: result,
-          );
-        } else {
-          await journalRepository.updateJournalStatus(
-            id: journal.id,
-            status: 'failed',
-            result: result,
-            errorMessage: result['msg']?.toString(),
-          );
-        }
-        if (!_isCurrentDeployRun(runContext)) {
-          throw _AbortDeploymentException();
-        }
-        return result;
-      }
-
-      var keyMaterial = await acquireDeployKey(forceFreshKey: false);
-      await registerDeployKey(keyMaterial.publicKey);
-      var attemptTimelineStartIndex = deployTimeline.length;
-      var deployResult = await runDeploymentWithKey(keyMaterial.privateKey);
-      var failureMessage = _deploymentFailureMessage(deployResult);
-      var attemptTimeline = deployTimeline.sublist(attemptTimelineStartIndex);
-
-      // coverage-gate: repository_key_rotation_retry
-      if (failureMessage != null &&
-          keyMaterial.reusedStoredKey &&
-          isRepositoryCloneAccessFailure(
-            failureMessage: failureMessage,
-            timeline: attemptTimeline,
-            failureEvidence: latestDeployFailureEvidence,
-          )) {
-        appendRunTimeline(
-          'Stored deploy key could not access repository; rotating key and retrying once',
-        );
-        await secretRepo.deleteDeployKey(selectedRepo);
-        keyMaterial = await acquireDeployKey(forceFreshKey: true);
-        await registerDeployKey(keyMaterial.publicKey);
-        attemptTimelineStartIndex = deployTimeline.length;
-        deployResult = await runDeploymentWithKey(keyMaterial.privateKey);
-        failureMessage = _deploymentFailureMessage(deployResult);
-        attemptTimeline = deployTimeline.sublist(attemptTimelineStartIndex);
-      }
-      // end coverage-gate
-
-      if (failureMessage != null) {
-        final hostKeyConfirmation =
-            GitHubRepositoryHostKeyConfirmation.fromPayload(
-              deployResult['repository_host_key_confirmation'],
-            );
-        if (deployResult['repository_host_key_confirmation_required'] == true &&
-            hostKeyConfirmation != null) {
-          final acceptedPromptId =
-              _acceptedRepositoryHostKeyPromptIdByProject[selectedProject.id];
-          if (acceptedPromptId == hostKeyConfirmation.promptId) {
-            _pendingRepositoryHostKeyRetryByProject.remove(selectedProject.id);
-            _acceptedRepositoryHostKeyPromptIdByProject.remove(
-              selectedProject.id,
-            );
-            await persistDeployOutcome(false, deployResult: deployResult);
-            updateRunState(
-              deployStatus: GitHubDeployStatus.error,
-              statusMessage:
-                  'Deploy Dash still could not save the trusted GitHub SSH identity on the server. Check the deployment log and try again.',
-              deployTimelineOverride: [
-                ...deployTimeline,
-                'GitHub SSH identity was trusted, but the server still asked for the same confirmation.',
-              ],
-              clearFailureEvidence: true,
-              clearSuggestedNextStep: true,
-              clearActiveRun: true,
-            );
-            return;
-          }
-          _pendingRepositoryHostKeyRetryByProject[selectedProject.id] =
-              _PendingRepositoryHostKeyRetry(
-                primaryDomain: primaryDomain,
-                branch: branch,
-                appPort: appPort,
-                repositoryFullName: selectedRepo,
-                domainRoutingMode: effectiveDomainRoutingMode,
-                railpackBuildCommand: effectiveBuildCommand,
-                railpackRunCommand: effectiveRunCommand,
-                railpackProvider: normalizedProvider,
-                appSubdirectory: effectiveAppSubdirectory,
-                selectedServer: selectedServer,
-                selectedProject: selectedProject,
-                actorLabel: actorLabel,
-                onTaskStarted: onTaskStarted,
-              );
-          updateRunState(
-            deployStatus:
-                GitHubDeployStatus.awaitingRepositoryHostKeyConfirmation,
-            statusMessage:
-                'Confirm the GitHub SSH identity before Deploy Dash fetches this repository.',
-            deployTimelineOverride: [
-              ...deployTimeline,
-              'GitHub SSH identity needs confirmation before retrying.',
-            ],
-            repositoryHostKeyConfirmation: hostKeyConfirmation,
-            clearFailureEvidence: true,
-            clearSuggestedNextStep: true,
-            clearActiveRun: true,
-          );
-          return;
-        }
+  /// One owner (D-26): finishes a deploy attempt whose result carried a
+  /// failure — host-key confirmation, persisted evidence, error state.
+  Future<void> _finishFailedDeployAttempt({
+    required _DeployRun run,
+    required Map<String, dynamic> deployResult,
+    required String failureMessage,
+    required List<String> attemptTimeline,
+    required Project selectedProject,
+    required Server selectedServer,
+    required String selectedRepo,
+    required String branch,
+    required String primaryDomain,
+    required int appPort,
+    required String effectiveDomainRoutingMode,
+    required String effectiveBuildCommand,
+    required String effectiveRunCommand,
+    required String? normalizedProvider,
+    required String? effectiveAppSubdirectory,
+    required String? actorLabel,
+    required void Function(int taskId, String phase)? onTaskStarted,
+  }) async {
+    final hostKeyConfirmation = GitHubRepositoryHostKeyConfirmation.fromPayload(
+      deployResult['repository_host_key_confirmation'],
+    );
+    if (deployResult['repository_host_key_confirmation_required'] == true &&
+        hostKeyConfirmation != null) {
+      final acceptedPromptId =
+          _acceptedRepositoryHostKeyPromptIdByProject[selectedProject.id];
+      if (acceptedPromptId == hostKeyConfirmation.promptId) {
+        _pendingRepositoryHostKeyRetryByProject.remove(selectedProject.id);
         _acceptedRepositoryHostKeyPromptIdByProject.remove(selectedProject.id);
-        // coverage-gate: deploy_failure_advice
-        await persistDeployOutcome(false, deployResult: deployResult);
-        final subdirectoryHint = hintForMissingRailpackApp(
-          failureMessage: failureMessage,
-          timeline: attemptTimeline,
-          configuredSubdirectory: effectiveAppSubdirectory,
+        await _persistDeployOutcome(
+          run,
+          false,
+          deployResult: deployResult,
+          normalizedProvider: normalizedProvider,
+          effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+          actorLabel: actorLabel,
         );
-        final buildCommandHint = hintForWrongBuildOutputPath(
-          failureMessage: failureMessage,
-          timeline: attemptTimeline,
-        );
-        final domainOwnershipHint = hintForDomainOwnershipConflict(
-          failureMessage: failureMessage,
-        );
-        final repositoryAccessHint = hintForRepositoryAccessFailure(
-          failureMessage: failureMessage,
-          timeline: attemptTimeline,
-          failureEvidence: latestDeployFailureEvidence,
-        );
-        final hints = <String>[
-          ?subdirectoryHint,
-          ?buildCommandHint,
-          ?domainOwnershipHint,
-          ?repositoryAccessHint,
-        ];
-        final failureEvidence = latestDeployFailureEvidence;
-        if (failureEvidence != null) {
-          await _persistDeployFailureEvidence(
-            projectId: selectedProject.id,
-            server: selectedServer,
-            evidence: failureEvidence,
-            journal: latestDeployJournal,
-          );
-        } else {
-          await _persistLegacyDeployRuntimeLogExcerpt(
-            projectId: selectedProject.id,
-            server: selectedServer,
-            deployResult: deployResult,
-          );
-        }
-        updateRunState(
+        _updateDeployRunState(
+          run,
           deployStatus: GitHubDeployStatus.error,
-          statusMessage: failureMessage,
-          deployTimelineOverride: deployTimeline,
-          failureEvidence: failureEvidence,
-          suggestedNextStep: hints.isEmpty ? null : hints.join(' '),
-          clearFailureEvidence: failureEvidence == null,
-          clearSuggestedNextStep: hints.isEmpty,
+          statusMessage:
+              'Deploy Dash still could not save the trusted GitHub SSH identity on the server. Check the deployment log and try again.',
+          deployTimelineOverride: [
+            ...run.deployTimeline,
+            'GitHub SSH identity was trusted, but the server still asked for the same confirmation.',
+          ],
+          clearFailureEvidence: true,
+          clearSuggestedNextStep: true,
           clearActiveRun: true,
         );
-        // end coverage-gate
         return;
       }
-
-      deployTimeline = [
-        ...deployTimeline,
-        'Deployment completed successfully',
-        if (deployResult['http_url'] != null)
-          'HTTP: ${deployResult['http_url']}',
-        if (deployResult['https_url'] != null)
-          'HTTPS: ${deployResult['https_url']}',
-      ];
-      final publicHealthPayload = deployResult['public_health'];
-      final publicHealth = AppPublicHealthSnapshot.fromPayload(
-        publicHealthPayload is Map ? publicHealthPayload : null,
-      );
-      final processReadiness = deployResult['process_readiness'];
-      final processReadinessStatus = processReadiness is Map
-          ? processReadiness['status']?.toString().trim()
-          : null;
-      _acceptedRepositoryHostKeyPromptIdByProject.remove(selectedProject.id);
-      await persistDeployOutcome(true, deployResult: deployResult);
-      await ref
-          .read(appReleaseRepositoryProvider)
-          .updateJournalStatus(
-            id: latestDeployJournal.id,
-            status: 'committed_local',
-            result: deployResult,
+      _pendingRepositoryHostKeyRetryByProject[selectedProject.id] =
+          _PendingRepositoryHostKeyRetry(
+            primaryDomain: primaryDomain,
+            branch: branch,
+            appPort: appPort,
+            repositoryFullName: selectedRepo,
+            domainRoutingMode: effectiveDomainRoutingMode,
+            railpackBuildCommand: effectiveBuildCommand,
+            railpackRunCommand: effectiveRunCommand,
+            railpackProvider: normalizedProvider,
+            appSubdirectory: effectiveAppSubdirectory,
+            selectedServer: selectedServer,
+            selectedProject: selectedProject,
+            actorLabel: actorLabel,
+            onTaskStarted: onTaskStarted,
           );
-      updateRunState(
-        deployStatus: GitHubDeployStatus.success,
-        statusMessage: publicHealth.needsAttention
-            ? 'Deploy completed, but the public URL check failed. Review runtime logs or environment settings.'
-            : 'Deploy completed. ${deployResult['https_url'] ?? 'HTTPS URL ready.'} App runtime logs are in the Log screen.',
-        processReadinessStatus: processReadinessStatus ?? 'unknown',
-        publicHealth: publicHealth,
-        deployTimelineOverride: deployTimeline,
+      _updateDeployRunState(
+        run,
+        deployStatus: GitHubDeployStatus.awaitingRepositoryHostKeyConfirmation,
+        statusMessage:
+            'Confirm the GitHub SSH identity before Deploy Dash fetches this repository.',
+        deployTimelineOverride: [
+          ...run.deployTimeline,
+          'GitHub SSH identity needs confirmation before retrying.',
+        ],
+        repositoryHostKeyConfirmation: hostKeyConfirmation,
         clearFailureEvidence: true,
         clearSuggestedNextStep: true,
         clearActiveRun: true,
       );
+      return;
+    }
+    _acceptedRepositoryHostKeyPromptIdByProject.remove(selectedProject.id);
+    // coverage-gate: deploy_failure_advice
+    await _persistDeployOutcome(
+      run,
+      false,
+      deployResult: deployResult,
+      normalizedProvider: normalizedProvider,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+      actorLabel: actorLabel,
+    );
+    final subdirectoryHint = hintForMissingRailpackApp(
+      failureMessage: failureMessage,
+      timeline: attemptTimeline,
+      configuredSubdirectory: effectiveAppSubdirectory,
+    );
+    final buildCommandHint = hintForWrongBuildOutputPath(
+      failureMessage: failureMessage,
+      timeline: attemptTimeline,
+    );
+    final domainOwnershipHint = hintForDomainOwnershipConflict(
+      failureMessage: failureMessage,
+    );
+    final repositoryAccessHint = hintForRepositoryAccessFailure(
+      failureMessage: failureMessage,
+      timeline: attemptTimeline,
+      failureEvidence: run.latestDeployFailureEvidence,
+    );
+    final hints = <String>[
+      ?subdirectoryHint,
+      ?buildCommandHint,
+      ?domainOwnershipHint,
+      ?repositoryAccessHint,
+    ];
+    final failureEvidence = run.latestDeployFailureEvidence;
+    if (failureEvidence != null) {
+      await _persistDeployFailureEvidence(
+        projectId: selectedProject.id,
+        server: selectedServer,
+        evidence: failureEvidence,
+        journal: run.latestDeployJournal,
+      );
+    } else {
+      await _persistLegacyDeployRuntimeLogExcerpt(
+        projectId: selectedProject.id,
+        server: selectedServer,
+        deployResult: deployResult,
+      );
+    }
+    _updateDeployRunState(
+      run,
+      deployStatus: GitHubDeployStatus.error,
+      statusMessage: failureMessage,
+      deployTimelineOverride: run.deployTimeline,
+      failureEvidence: failureEvidence,
+      suggestedNextStep: hints.isEmpty ? null : hints.join(' '),
+      clearFailureEvidence: failureEvidence == null,
+      clearSuggestedNextStep: hints.isEmpty,
+      clearActiveRun: true,
+    );
+    // end coverage-gate
+    return;
+  }
+
+  /// One owner (D-26): finishes a deploy attempt whose result carried no
+  /// failure — success timeline, persisted outcome, success state.
+  Future<void> _finishSuccessfulDeployAttempt({
+    required _DeployRun run,
+    required Map<String, dynamic> deployResult,
+    required Project selectedProject,
+    required String? normalizedProvider,
+    required String effectiveDomainRoutingMode,
+    required String? actorLabel,
+  }) async {
+    run.deployTimeline = [
+      ...run.deployTimeline,
+      'Deployment completed successfully',
+      if (deployResult['http_url'] != null) 'HTTP: ${deployResult['http_url']}',
+      if (deployResult['https_url'] != null)
+        'HTTPS: ${deployResult['https_url']}',
+    ];
+    final publicHealthPayload = deployResult['public_health'];
+    final publicHealth = AppPublicHealthSnapshot.fromPayload(
+      publicHealthPayload is Map ? publicHealthPayload : null,
+    );
+    final processReadiness = deployResult['process_readiness'];
+    final processReadinessStatus = processReadiness is Map
+        ? processReadiness['status']?.toString().trim()
+        : null;
+    _acceptedRepositoryHostKeyPromptIdByProject.remove(selectedProject.id);
+    await _persistDeployOutcome(
+      run,
+      true,
+      deployResult: deployResult,
+      normalizedProvider: normalizedProvider,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+      actorLabel: actorLabel,
+    );
+    await ref
+        .read(appReleaseRepositoryProvider)
+        .updateJournalStatus(
+          id: run.latestDeployJournal.id,
+          status: 'committed_local',
+          result: deployResult,
+        );
+    _updateDeployRunState(
+      run,
+      deployStatus: GitHubDeployStatus.success,
+      statusMessage: publicHealth.needsAttention
+          ? 'Deploy completed, but the public URL check failed. Review runtime logs or environment settings.'
+          : 'Deploy completed. ${deployResult['https_url'] ?? 'HTTPS URL ready.'} App runtime logs are in the Log screen.',
+      processReadinessStatus: processReadinessStatus ?? 'unknown',
+      publicHealth: publicHealth,
+      deployTimelineOverride: run.deployTimeline,
+      clearFailureEvidence: true,
+      clearSuggestedNextStep: true,
+      clearActiveRun: true,
+    );
+  }
+
+  /// One owner (D-26): runs the deploy attempts — key acquire, register,
+  /// run, single key-rotation retry — then dispatches to the failure or
+  /// success finishers.
+  Future<void> _runDeployAttemptLoop({
+    required _DeployRun run,
+    required Map<String, dynamic> connection,
+    required Map<String, dynamic> baseSettings,
+    required Map<String, String> runtimeEnv,
+    required String token,
+    required String? repositoryHostKeyPolicy,
+    required String? acceptedRepositoryHostKeyFingerprint,
+    required int appPort,
+    required String? normalizedProvider,
+    required String effectiveDomainRoutingMode,
+    required String effectiveBuildCommand,
+    required String effectiveRunCommand,
+    required String? effectiveAppSubdirectory,
+    required Project selectedProject,
+    required Server selectedServer,
+    required String selectedRepo,
+    required String branch,
+    required String primaryDomain,
+    required String? actorLabel,
+    required void Function(int taskId, String phase)? onTaskStarted,
+  }) async {
+    var keyMaterial = await _acquireDeployKey(
+      run,
+      forceFreshKey: false,
+      connection: connection,
+      baseSettings: baseSettings,
+      onTaskStarted: onTaskStarted,
+      normalizedProvider: normalizedProvider,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+      actorLabel: actorLabel,
+    );
+    await _registerDeployKey(run, keyMaterial.publicKey, token: token);
+    var attemptTimelineStartIndex = run.deployTimeline.length;
+    var deployResult = await _runDeploymentWithKey(
+      run,
+      keyMaterial.privateKey,
+      connection: connection,
+      baseSettings: baseSettings,
+      runtimeEnv: runtimeEnv,
+      repositoryHostKeyPolicy: repositoryHostKeyPolicy,
+      acceptedRepositoryHostKeyFingerprint:
+          acceptedRepositoryHostKeyFingerprint,
+      appPort: appPort,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+      normalizedProvider: normalizedProvider,
+      onTaskStarted: onTaskStarted,
+    );
+    var failureMessage = _deploymentFailureMessage(deployResult);
+    var attemptTimeline = run.deployTimeline.sublist(attemptTimelineStartIndex);
+
+    // coverage-gate: repository_key_rotation_retry
+    if (failureMessage != null &&
+        keyMaterial.reusedStoredKey &&
+        isRepositoryCloneAccessFailure(
+          failureMessage: failureMessage,
+          timeline: attemptTimeline,
+          failureEvidence: run.latestDeployFailureEvidence,
+        )) {
+      _appendDeployRunTimeline(
+        run,
+        'Stored deploy key could not access repository; rotating key and retrying once',
+      );
+      await ref
+          .read(gitHubSecretRepositoryProvider)
+          .deleteDeployKey(selectedRepo);
+      keyMaterial = await _acquireDeployKey(
+        run,
+        forceFreshKey: true,
+        connection: connection,
+        baseSettings: baseSettings,
+        onTaskStarted: onTaskStarted,
+        normalizedProvider: normalizedProvider,
+        effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+        actorLabel: actorLabel,
+      );
+      await _registerDeployKey(run, keyMaterial.publicKey, token: token);
+      attemptTimelineStartIndex = run.deployTimeline.length;
+      deployResult = await _runDeploymentWithKey(
+        run,
+        keyMaterial.privateKey,
+        connection: connection,
+        baseSettings: baseSettings,
+        runtimeEnv: runtimeEnv,
+        repositoryHostKeyPolicy: repositoryHostKeyPolicy,
+        acceptedRepositoryHostKeyFingerprint:
+            acceptedRepositoryHostKeyFingerprint,
+        appPort: appPort,
+        effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+        normalizedProvider: normalizedProvider,
+        onTaskStarted: onTaskStarted,
+      );
+      failureMessage = _deploymentFailureMessage(deployResult);
+      attemptTimeline = run.deployTimeline.sublist(attemptTimelineStartIndex);
+    }
+    // end coverage-gate
+
+    if (failureMessage != null) {
+      await _finishFailedDeployAttempt(
+        run: run,
+        deployResult: deployResult,
+        failureMessage: failureMessage,
+        attemptTimeline: attemptTimeline,
+        selectedProject: selectedProject,
+        selectedServer: selectedServer,
+        selectedRepo: selectedRepo,
+        branch: branch,
+        primaryDomain: primaryDomain,
+        appPort: appPort,
+        effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+        effectiveBuildCommand: effectiveBuildCommand,
+        effectiveRunCommand: effectiveRunCommand,
+        normalizedProvider: normalizedProvider,
+        effectiveAppSubdirectory: effectiveAppSubdirectory,
+        actorLabel: actorLabel,
+        onTaskStarted: onTaskStarted,
+      );
+      return;
+    }
+
+    await _finishSuccessfulDeployAttempt(
+      run: run,
+      deployResult: deployResult,
+      selectedProject: selectedProject,
+      normalizedProvider: normalizedProvider,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+      actorLabel: actorLabel,
+    );
+  }
+
+  // coverage-gate: deploy_selected_repository
+  Future<void> deploySelectedRepository({
+    required String primaryDomain,
+    required String branch,
+    required int appPort,
+    String? repositoryFullName,
+    String? domainRoutingMode,
+    String? railpackBuildCommand,
+    String? railpackRunCommand,
+    String? railpackProvider,
+    String? appSubdirectory,
+    String? repositoryHostKeyPolicy,
+    String? acceptedRepositoryHostKeyFingerprint,
+    Server? selectedServerOverride,
+    Project? selectedProjectOverride,
+    String? actorLabel,
+    void Function(int taskId, String phase)? onTaskStarted,
+  }) async {
+    final inputs = await _resolveDeployRunInputs(
+      repositoryFullName: repositoryFullName,
+      primaryDomain: primaryDomain,
+      branch: branch,
+      appPort: appPort,
+      domainRoutingMode: domainRoutingMode,
+      railpackBuildCommand: railpackBuildCommand,
+      railpackRunCommand: railpackRunCommand,
+      railpackProvider: railpackProvider,
+      appSubdirectory: appSubdirectory,
+      selectedServerOverride: selectedServerOverride,
+      selectedProjectOverride: selectedProjectOverride,
+      actorLabel: actorLabel,
+      repositoryHostKeyPolicy: repositoryHostKeyPolicy,
+    );
+    if (inputs == null) {
+      return;
+    }
+    final token = inputs.token;
+    final selectedServer = inputs.selectedServer;
+    final selectedProject = inputs.selectedProject;
+    final selectedRepo = inputs.selectedRepo;
+    final connection = inputs.connection;
+    final normalizedProvider = inputs.normalizedProvider;
+    final effectiveBuildCommand = inputs.effectiveBuildCommand;
+    final effectiveRunCommand = inputs.effectiveRunCommand;
+    final includeBuildCommand = inputs.includeBuildCommand;
+    final includeRunCommand = inputs.includeRunCommand;
+    final effectiveAppSubdirectory = inputs.effectiveAppSubdirectory;
+    final effectiveDomainRoutingMode = inputs.effectiveDomainRoutingMode;
+
+    final run = _beginDeployRun(
+      selectedProject: selectedProject,
+      selectedServer: selectedServer,
+      selectedRepo: selectedRepo,
+      branch: branch,
+      primaryDomain: primaryDomain,
+      repositoryHostKeyPolicy: repositoryHostKeyPolicy,
+    );
+
+    _persistDeployConfiguration(
+      selectedProject: selectedProject,
+      selectedRepo: selectedRepo,
+      primaryDomain: primaryDomain,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+      effectiveAppSubdirectory: effectiveAppSubdirectory,
+      branch: branch,
+      appPort: appPort,
+      normalizedProvider: normalizedProvider,
+      effectiveBuildCommand: effectiveBuildCommand,
+      effectiveRunCommand: effectiveRunCommand,
+    );
+
+    final deploySettings = await _buildDeploySettings(
+      selectedProject: selectedProject,
+      selectedRepo: selectedRepo,
+      branch: branch,
+      primaryDomain: primaryDomain,
+      effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+      appPort: appPort,
+      normalizedProvider: normalizedProvider,
+      includeBuildCommand: includeBuildCommand,
+      effectiveBuildCommand: effectiveBuildCommand,
+      includeRunCommand: includeRunCommand,
+      effectiveRunCommand: effectiveRunCommand,
+      effectiveAppSubdirectory: effectiveAppSubdirectory,
+    );
+    final baseSettings = deploySettings.baseSettings;
+    final runtimeEnv = deploySettings.runtimeEnv;
+
+    try {
+      await _runDeployAttemptLoop(
+        run: run,
+        connection: connection,
+        baseSettings: baseSettings,
+        runtimeEnv: runtimeEnv,
+        token: token,
+        repositoryHostKeyPolicy: repositoryHostKeyPolicy,
+        acceptedRepositoryHostKeyFingerprint:
+            acceptedRepositoryHostKeyFingerprint,
+        appPort: appPort,
+        normalizedProvider: normalizedProvider,
+        effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+        effectiveBuildCommand: effectiveBuildCommand,
+        effectiveRunCommand: effectiveRunCommand,
+        effectiveAppSubdirectory: effectiveAppSubdirectory,
+        selectedProject: selectedProject,
+        selectedServer: selectedServer,
+        selectedRepo: selectedRepo,
+        branch: branch,
+        primaryDomain: primaryDomain,
+        actorLabel: actorLabel,
+        onTaskStarted: onTaskStarted,
+      );
     } on _AbortDeploymentException {
       return;
     } catch (error) {
-      await persistDeployOutcome(false);
-      updateRunState(
+      await _persistDeployOutcome(
+        run,
+        false,
+        normalizedProvider: normalizedProvider,
+        effectiveDomainRoutingMode: effectiveDomainRoutingMode,
+        actorLabel: actorLabel,
+      );
+      _updateDeployRunState(
+        run,
         deployStatus: GitHubDeployStatus.error,
         statusMessage: 'Deployment failed: $error',
         clearFailureEvidence: true,
@@ -1823,10 +2333,7 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
     if (candidate.isEmpty || candidate == 'not configured') {
       return false;
     }
-    final fqdn = RegExp(
-      r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$',
-    );
-    return fqdn.hasMatch(candidate);
+    return githubFqdnPattern.hasMatch(candidate);
   }
 
   static bool _isValidBranch(String value) {
@@ -1834,36 +2341,10 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
     if (candidate.isEmpty) {
       return false;
     }
-    return RegExp(r'^[A-Za-z0-9._/-]+$').hasMatch(candidate);
+    return githubBranchPattern.hasMatch(candidate);
   }
 
   static const String _invalidAppSubdirectory = '__invalid__';
-
-  static String? _normalizeAppSubdirectory(String? raw) {
-    if (raw == null) {
-      return null;
-    }
-    final normalized = raw
-        .trim()
-        .replaceAll('\\', '/')
-        .replaceAll(RegExp(r'^/+|/+$'), '');
-    if (normalized.isEmpty) {
-      return null;
-    }
-    final parts = normalized.split('/');
-    final cleaned = <String>[];
-    for (final part in parts) {
-      final segment = part.trim();
-      if (segment.isEmpty || segment == '.' || segment == '..') {
-        return _invalidAppSubdirectory;
-      }
-      cleaned.add(segment);
-    }
-    if (cleaned.isEmpty) {
-      return null;
-    }
-    return cleaned.join('/');
-  }
 
   // end coverage-gate
   String? _preferredRepositorySelection(List<GitHubRepository> repos) {

@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/github_repository.dart';
 import '../services/protocol_link_ingress.dart';
+import '../utils/github_repository_pattern.dart';
 
 /// Everything that talks to github.com over HTTP, and nothing else.
 ///
@@ -118,46 +119,19 @@ class SystemGitHubAuthGateway implements GitHubAuthGateway {
   Future<List<GitHubRepository>> fetchRepositories({
     required String accessToken,
   }) async {
-    final client = HttpClient();
     final repositories = <GitHubRepository>[];
     final seenFullNames = <String>{};
-    Uri? nextPageUrl = Uri.https('api.github.com', '/user/repos', {
-      'per_page': '100',
-      'sort': 'updated',
-      'affiliation': 'owner,collaborator,organization_member',
-    });
-    var pageCount = 0;
-
-    try {
-      while (nextPageUrl != null && pageCount < 10) {
-        pageCount += 1;
-        final request = await client.getUrl(nextPageUrl);
-        request.headers.set(
-          HttpHeaders.authorizationHeader,
-          'Bearer $accessToken',
-        );
-        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(
-          HttpHeaders.userAgentHeader,
-          'DeployDashDesktop/1.0',
-        );
-
-        final response = await request.close();
-        final payload = await _readJson(response);
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw StateError(
-            _githubApiErrorMessage(
-              fallback:
-                  'GitHub repository fetch failed (${response.statusCode}).',
-              payload: payload is Map<String, dynamic> ? payload : null,
-            ),
-          );
-        }
-        if (payload is! List<dynamic>) {
-          throw StateError('GitHub repository response was not a list.');
-        }
-
-        for (final repoJson in payload) {
+    await _paginatedGitHubGet(
+      accessToken: accessToken,
+      firstUrl: Uri.https('api.github.com', '/user/repos', {
+        'per_page': '100',
+        'sort': 'updated',
+        'affiliation': 'owner,collaborator,organization_member',
+      }),
+      accept: 'application/json',
+      resourceNoun: 'repository',
+      collectPage: (page) {
+        for (final repoJson in page) {
           if (repoJson is! Map<String, dynamic>) {
             continue;
           }
@@ -179,12 +153,8 @@ class SystemGitHubAuthGateway implements GitHubAuthGateway {
             ),
           );
         }
-
-        nextPageUrl = _parseNextPageUri(response.headers.value('link'));
-      }
-    } finally {
-      client.close(force: true);
-    }
+      },
+    );
 
     repositories.sort(
       (left, right) =>
@@ -198,51 +168,20 @@ class SystemGitHubAuthGateway implements GitHubAuthGateway {
     required String accessToken,
     required String repositoryFullName,
   }) async {
-    final normalizedRepository = repositoryFullName.trim();
-    final repositoryPattern = RegExp(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$');
-    if (!repositoryPattern.hasMatch(normalizedRepository)) {
-      throw StateError('Invalid repository name: $repositoryFullName');
-    }
+    final normalizedRepository = _requireRepositoryFullName(repositoryFullName);
 
-    final client = HttpClient();
     final branches = <String>{};
-    Uri? nextPageUrl = Uri.https(
-      'api.github.com',
-      '/repos/$normalizedRepository/branches',
-      {'per_page': '100'},
-    );
-    var pageCount = 0;
-    try {
-      while (nextPageUrl != null && pageCount < 10) {
-        pageCount += 1;
-        final request = await client.getUrl(nextPageUrl);
-        request.headers.set(
-          HttpHeaders.authorizationHeader,
-          'Bearer $accessToken',
-        );
-        request.headers.set(
-          HttpHeaders.acceptHeader,
-          'application/vnd.github+json',
-        );
-        request.headers.set(
-          HttpHeaders.userAgentHeader,
-          'DeployDashDesktop/1.0',
-        );
-
-        final response = await request.close();
-        final payload = await _readJson(response);
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw StateError(
-            _githubApiErrorMessage(
-              fallback: 'GitHub branch fetch failed (${response.statusCode}).',
-              payload: payload is Map<String, dynamic> ? payload : null,
-            ),
-          );
-        }
-        if (payload is! List<dynamic>) {
-          throw StateError('GitHub branch response was not a list.');
-        }
-        for (final branchJson in payload) {
+    await _paginatedGitHubGet(
+      accessToken: accessToken,
+      firstUrl: Uri.https(
+        'api.github.com',
+        '/repos/$normalizedRepository/branches',
+        {'per_page': '100'},
+      ),
+      accept: 'application/vnd.github+json',
+      resourceNoun: 'branch',
+      collectPage: (page) {
+        for (final branchJson in page) {
           if (branchJson is! Map<String, dynamic>) {
             continue;
           }
@@ -251,16 +190,87 @@ class SystemGitHubAuthGateway implements GitHubAuthGateway {
             branches.add(name.trim());
           }
         }
-        nextPageUrl = _parseNextPageUri(response.headers.value('link'));
-      }
-    } finally {
-      client.close(force: true);
-    }
+      },
+    );
 
     final sorted = branches.toList(
       growable: false,
     )..sort((left, right) => left.toLowerCase().compareTo(right.toLowerCase()));
     return sorted;
+  }
+
+  /// One paged-GET owner for the repository and branch fetchers (D-26).
+  ///
+  /// Why: the two fetchers share the page-cap loop, auth headers, status
+  /// check, list check, and next-page tail, and differ in endpoint, accept
+  /// value, per-endpoint sentences, and item parsing. The differences stay
+  /// parameters — `accept` because the values differ per endpoint,
+  /// `resourceNoun` because both failure sentences embed it — so the shared
+  /// loop cannot silently normalize either contract. Item parsing stays
+  /// per-fetcher behind [collectPage].
+  Future<void> _paginatedGitHubGet({
+    required String accessToken,
+    required Uri firstUrl,
+    required String accept,
+    required String resourceNoun,
+    required void Function(List<dynamic> page) collectPage,
+  }) async {
+    final client = HttpClient();
+    Uri? nextPageUrl = firstUrl;
+    var pageCount = 0;
+
+    try {
+      while (nextPageUrl != null && pageCount < 10) {
+        pageCount += 1;
+        final request = await client.getUrl(nextPageUrl);
+        _setGitHubApiHeaders(request, accessToken: accessToken, accept: accept);
+
+        final response = await request.close();
+        final payload = await _readJson(response);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw StateError(
+            _githubApiErrorMessage(
+              fallback:
+                  'GitHub $resourceNoun fetch failed (${response.statusCode}).',
+              payload: payload is Map<String, dynamic> ? payload : null,
+            ),
+          );
+        }
+        if (payload is! List<dynamic>) {
+          throw StateError('GitHub $resourceNoun response was not a list.');
+        }
+
+        collectPage(payload);
+
+        nextPageUrl = _parseNextPageUri(response.headers.value('link'));
+      }
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// The auth/accept/user-agent header block every GitHub REST call sends.
+  ///
+  /// Why: all three REST methods set the same three headers and differ only
+  /// in the accept value, which stays a parameter. The status tails stay
+  /// per-call — `registerDeployKey` answers 201/422 while the paged GETs
+  /// answer 2xx, and unifying those verdicts would change behavior (D-26).
+  static void _setGitHubApiHeaders(
+    HttpClientRequest request, {
+    required String accessToken,
+    required String accept,
+  }) {
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $accessToken');
+    request.headers.set(HttpHeaders.acceptHeader, accept);
+    request.headers.set(HttpHeaders.userAgentHeader, 'DeployDashDesktop/1.0');
+  }
+
+  static String _requireRepositoryFullName(String repositoryFullName) {
+    final normalizedRepository = repositoryFullName.trim();
+    if (!githubRepositoryFullNamePattern.hasMatch(normalizedRepository)) {
+      throw StateError('Invalid repository name: $repositoryFullName');
+    }
+    return normalizedRepository;
   }
 
   @override
@@ -276,26 +286,18 @@ class SystemGitHubAuthGateway implements GitHubAuthGateway {
       );
     }
 
-    final normalizedRepository = repositoryFullName.trim();
-    final repositoryPattern = RegExp(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$');
-    if (!repositoryPattern.hasMatch(normalizedRepository)) {
-      throw StateError('Invalid repository name: $repositoryFullName');
-    }
+    final normalizedRepository = _requireRepositoryFullName(repositoryFullName);
 
     final client = HttpClient();
     try {
       final request = await client.postUrl(
         Uri.https('api.github.com', '/repos/$normalizedRepository/keys'),
       );
-      request.headers.set(
-        HttpHeaders.authorizationHeader,
-        'Bearer $accessToken',
+      _setGitHubApiHeaders(
+        request,
+        accessToken: accessToken,
+        accept: 'application/vnd.github+json',
       );
-      request.headers.set(
-        HttpHeaders.acceptHeader,
-        'application/vnd.github+json',
-      );
-      request.headers.set(HttpHeaders.userAgentHeader, 'DeployDashDesktop/1.0');
       request.headers.contentType = ContentType.json;
       request.write(
         jsonEncode({

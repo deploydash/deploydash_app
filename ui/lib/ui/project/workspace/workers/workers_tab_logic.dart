@@ -1,4 +1,5 @@
 import '../../../../providers/worker_instance_provider.dart';
+import '../../../../utils/project_slug.dart';
 
 /// The worker tab's pure logic: the values it edits, and the rule that names a
 /// new worker.
@@ -145,12 +146,7 @@ class WorkerDraft {
 /// slugified and then suffixed until it does not collide. A blank name falls
 /// back to `worker` rather than producing an empty id.
 String nextWorkerId(String name, Set<String> existingIds) {
-  final base = name
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-      .replaceAll(RegExp(r'^-+|-+$'), '');
-  final candidateBase = base.isEmpty ? 'worker' : base;
+  final candidateBase = slugifyProjectName(name, fallback: 'worker');
   var candidate = candidateBase;
   var counter = 2;
   while (existingIds.contains(candidate)) {

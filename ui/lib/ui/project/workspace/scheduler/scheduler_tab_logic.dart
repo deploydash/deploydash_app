@@ -1,15 +1,11 @@
 import '../../../../providers/scheduler_task_provider.dart';
+import '../../../../utils/project_slug.dart';
 
 String schedulerNextTaskId(
   String name,
   Iterable<ProjectScheduledTask> existing,
 ) {
-  final base = name
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-      .replaceAll(RegExp(r'^-+|-+$'), '');
-  final candidateBase = base.isEmpty ? 'task' : base;
+  final candidateBase = slugifyProjectName(name, fallback: 'task');
   final existingIds = existing.map((task) => task.id).toSet();
   var candidate = candidateBase;
   var counter = 2;

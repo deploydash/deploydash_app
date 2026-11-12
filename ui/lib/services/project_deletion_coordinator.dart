@@ -5,6 +5,7 @@ import '../data/local/scheduler_task_repository.dart';
 import '../data/local/server_credential_repository.dart';
 import '../data/local/server_repository.dart';
 import '../models/result.dart';
+import '../utils/github_fqdn_pattern.dart';
 import '../utils/project_slug.dart';
 import '../utils/trim_or_null.dart';
 import 'project_database_settings.dart';
@@ -485,9 +486,7 @@ class ProjectDeletionCoordinator {
   }
 
   static bool _isValidDomain(String value) {
-    return RegExp(
-      r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$',
-    ).hasMatch(value.trim().toLowerCase());
+    return githubFqdnPattern.hasMatch(value.trim().toLowerCase());
   }
 }
 

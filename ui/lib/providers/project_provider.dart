@@ -7,6 +7,8 @@ import '../data/local/project_repository.dart';
 import '../models/app_user_attribute.dart';
 import '../models/railpack_runtime.dart';
 import '../services/app_analytics_service.dart';
+import '../utils/app_subdirectory.dart';
+import '../utils/project_slug.dart';
 import '../utils/trim_or_null.dart';
 import 'server_list_provider.dart';
 
@@ -37,10 +39,9 @@ class ProjectListNotifier extends Notifier<List<Project>> {
     int appPort = 3000,
   }) {
     final normalizedName = name.trim();
-    final slug = normalizedName
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-        .replaceAll(RegExp(r'^-+|-+$'), '');
+    // Empty fallback: the epoch suffix below disambiguates, so a name that
+    // normalizes away keeps the historical `project--<epoch>` id shape.
+    final slug = slugifyProjectName(normalizedName, fallback: '');
     final id = 'project-$slug-${DateTime.now().millisecondsSinceEpoch}';
     final normalizedServerId = trimOrNull(serverId);
 
@@ -115,7 +116,7 @@ class ProjectListNotifier extends Notifier<List<Project>> {
             primaryDomain: normalizedDomainConfig.primaryDomain,
             domainRoutingMode: normalizedDomainConfig.domainRoutingMode,
             repositoryFullName: repositoryFullName.trim(),
-            appSubdirectory: _normalizedAppSubdirectory(appSubdirectory),
+            appSubdirectory: normalizeAppSubdirectory(appSubdirectory),
             deployBranch: deployBranch.trim(),
             appPort: appPort,
             publicHealthCheckEnabled: publicHealthCheckEnabled,
@@ -390,32 +391,6 @@ class ProjectListNotifier extends Notifier<List<Project>> {
       normalized[key] = value;
     }
     return normalized;
-  }
-
-  static String? _normalizedAppSubdirectory(String? raw) {
-    if (raw == null) {
-      return null;
-    }
-    final normalized = raw
-        .trim()
-        .replaceAll('\\', '/')
-        .replaceAll(RegExp(r'^/+|/+$'), '');
-    if (normalized.isEmpty) {
-      return null;
-    }
-    final segments = normalized.split('/');
-    final cleaned = <String>[];
-    for (final segment in segments) {
-      final trimmed = segment.trim();
-      if (trimmed.isEmpty || trimmed == '.' || trimmed == '..') {
-        return null;
-      }
-      cleaned.add(trimmed);
-    }
-    if (cleaned.isEmpty) {
-      return null;
-    }
-    return cleaned.join('/');
   }
 
   static String? _normalizedSqliteVolumeName(String? raw) {

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/project.dart';
 import '../../models/railpack_runtime.dart';
+import '../../utils/app_subdirectory.dart';
 import '../../utils/trim_or_null.dart';
 import 'app_database.dart';
 
@@ -137,7 +138,7 @@ class ProjectRepository {
               ),
               repositoryFullName: Value(trimOrNull(project.repositoryFullName)),
               appSubdirectory: Value(
-                _normalizedAppSubdirectory(project.appSubdirectory),
+                normalizeAppSubdirectory(project.appSubdirectory),
               ),
               deployBranch: Value(_normalizedBranch(project.deployBranch)),
               appPort: Value(_normalizedPort(project.appPort)),
@@ -256,7 +257,7 @@ class ProjectRepository {
         primaryDomain: Value(normalizedDomainConfig.primaryDomain),
         domainRoutingMode: Value(normalizedDomainConfig.domainRoutingMode),
         repositoryFullName: Value(repositoryFullName.trim()),
-        appSubdirectory: Value(_normalizedAppSubdirectory(appSubdirectory)),
+        appSubdirectory: Value(normalizeAppSubdirectory(appSubdirectory)),
         deployBranch: Value(_normalizedBranch(deployBranch)),
         appPort: Value(_normalizedPort(appPort)),
         publicHealthCheckEnabled: publicHealthCheckEnabled == null
@@ -627,32 +628,6 @@ class ProjectRepository {
 
   static String _normalizedCommand(String value) {
     return value.trim();
-  }
-
-  static String? _normalizedAppSubdirectory(String? value) {
-    if (value == null) {
-      return null;
-    }
-    final normalized = value
-        .trim()
-        .replaceAll('\\', '/')
-        .replaceAll(RegExp(r'^/+|/+$'), '');
-    if (normalized.isEmpty) {
-      return null;
-    }
-    final segments = normalized.split('/');
-    final cleaned = <String>[];
-    for (final segment in segments) {
-      final trimmed = segment.trim();
-      if (trimmed.isEmpty || trimmed == '.' || trimmed == '..') {
-        return null;
-      }
-      cleaned.add(trimmed);
-    }
-    if (cleaned.isEmpty) {
-      return null;
-    }
-    return cleaned.join('/');
   }
 
   static String _normalizedTlsChallengeMode(String value) {

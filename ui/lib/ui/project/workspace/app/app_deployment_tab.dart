@@ -505,8 +505,9 @@ class _AppDeploymentSummaryState extends ConsumerState<_AppDeploymentSummary>
                               railpackProvider: projectId == null
                                   ? null
                                   : _railpackProviderFor(projectId),
-                              appSubdirectory: _normalizedAppSubdirectory(
+                              appSubdirectory: normalizeAppSubdirectory(
                                 _appSubdirectoryFor(projectId),
+                                invalidValue: _invalidAppSubdirectory,
                               ),
                             );
                           },

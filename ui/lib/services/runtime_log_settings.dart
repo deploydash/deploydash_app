@@ -1,8 +1,7 @@
 import '../domain/project.dart';
+import '../utils/github_branch_pattern.dart';
+import '../utils/github_repository_pattern.dart';
 import '../utils/project_slug.dart';
-
-final RegExp _repositoryPattern = RegExp(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$');
-final RegExp _branchPattern = RegExp(r'^[A-Za-z0-9._/-]+$');
 
 // Stand-ins for saved values that fail validation. See
 // [buildRuntimeLogSettings] for why substituting them is safe here.
@@ -46,10 +45,10 @@ Map<String, dynamic> buildRuntimeLogSettings(Project project) {
     'project_slug': slugifyProjectName(project.name),
     'repository_full_name':
         normalizedRepository != null &&
-            _repositoryPattern.hasMatch(normalizedRepository)
+            githubRepositoryFullNamePattern.hasMatch(normalizedRepository)
         ? normalizedRepository
         : _placeholderRepository,
-    'branch': _branchPattern.hasMatch(normalizedBranch)
+    'branch': githubBranchPattern.hasMatch(normalizedBranch)
         ? normalizedBranch
         : _placeholderBranch,
     // Always null: the log read does not route by domain, and sending a saved

@@ -1098,10 +1098,7 @@ class _ProjectWorkspaceImportCoordinatorState
     if (candidate.isEmpty || candidate == 'not configured') {
       return null;
     }
-    final fqdn = RegExp(
-      r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$',
-    );
-    return fqdn.hasMatch(candidate) ? candidate : null;
+    return githubFqdnPattern.hasMatch(candidate) ? candidate : null;
   }
 }
 
