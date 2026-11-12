@@ -14,6 +14,7 @@ absolute by construction and out of scope.
 from __future__ import annotations
 
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,6 +25,10 @@ _JOB_HEADER = re.compile(r"^  [A-Za-z0-9_-]+:\s*(?:#.*)?$")
 _GH_RELEASE = re.compile(r"\bgh\s+release\b")
 _CHAIN_SPLIT = re.compile(r"&&|\|\||;")
 _REPO_FLAG = re.compile(r"(?:^|\s)(?:--repo|-R)(?:\s|=)")
+# A '#' starting a comment: at line start or after whitespace. Never
+# matches ${#var} or a '#' inside a word, so parameter expansion and
+# quoted literals survive stripping.
+_COMMENT_START = re.compile(r"(?:^|\s)#")
 
 
 def _join_continuations(text: str) -> str:
@@ -54,9 +59,16 @@ def _job_blocks(workflow_text: str) -> list[tuple[str, str]]:
             current = []
         elif current is not None and (line.startswith("    ") or line.strip() == ""):
             current.append(line)
-        elif current is not None and re.match(r"^[A-Za-z]", line):
-            jobs.append((name, "\n".join(current)))
-            current = None
+        elif re.match(r"^[A-Za-z]", line):
+            if current is not None:
+                jobs.append((name, "\n".join(current)))
+                current = None
+            # The jobs block is over: without this, two-space keys
+            # under a later top-level block (e.g. `env:`) would parse
+            # as jobs. A comment-only stretch after `jobs:` leaves
+            # current as None, so the guard must live inside, not on
+            # the branch.
+            in_jobs = False
     if current is not None:
         jobs.append((name, "\n".join(current)))
     return jobs
@@ -66,9 +78,10 @@ def bare_gh_release_uses(job_body: str) -> list[str]:
     """Return joined command lines where `gh release` lacks --repo."""
     offenders: list[str] = []
     for line in _join_continuations(job_body).splitlines():
-        if not _GH_RELEASE.search(line):
+        code = _COMMENT_START.split(line, maxsplit=1)[0]
+        if not _GH_RELEASE.search(code):
             continue
-        for segment in _CHAIN_SPLIT.split(line):
+        for segment in _CHAIN_SPLIT.split(code):
             if _GH_RELEASE.search(segment) and not _REPO_FLAG.search(segment):
                 offenders.append(segment.strip())
     return offenders
@@ -85,12 +98,18 @@ def scan_workflow(path: Path) -> list[str]:
     return findings
 
 
+def scan_tree(workflows_dir: Path) -> list[str]:
+    """Scan every workflow file regardless of YAML extension."""
+    offenders: list[str] = []
+    for extension in ("*.yml", "*.yaml"):
+        for path in sorted(workflows_dir.glob(extension)):
+            offenders.extend(scan_workflow(path))
+    return offenders
+
+
 class GhReleaseRepoFlagTest(unittest.TestCase):
     def test_tree_workflows_have_no_bare_gh_release(self) -> None:
-        offenders: list[str] = []
-        for path in sorted(WORKFLOWS_DIR.glob("*.yml")):
-            offenders.extend(scan_workflow(path))
-        self.assertEqual(offenders, [])
+        self.assertEqual(scan_tree(WORKFLOWS_DIR), [])
 
     def test_flags_bare_gh_release_in_checkout_less_job(self) -> None:
         body = 'run: |\n  gh release upload "v1" SHA256SUMS --clobber\n'
@@ -116,6 +135,34 @@ class GhReleaseRepoFlagTest(unittest.TestCase):
         jobs = _job_blocks(text)
         self.assertEqual(len(jobs), 1)
         self.assertIn("actions/checkout", jobs[0][1])
+
+    def test_top_level_keys_after_jobs_are_not_jobs(self) -> None:
+        text = "jobs:\n  build:\n    steps:\n      - run: echo hi\nenv:\n  OUTER:\n    INNER: 1\n"
+        self.assertEqual([name for name, _ in _job_blocks(text)], ["build"])
+
+    def test_comment_only_jobs_opener_does_not_swallow_later_blocks(self) -> None:
+        text = "jobs:\n  # no jobs defined yet\n\nenv:\n  OUTER:\n    INNER: 1\n"
+        self.assertEqual(_job_blocks(text), [])
+
+    def test_commented_gh_release_is_not_flagged(self) -> None:
+        body = (
+            "run: |\n"
+            "  # gh release view v1\n"
+            "  echo done # gh release view v1\n"
+            '  echo "length ${#x}"\n'
+        )
+        self.assertEqual(bare_gh_release_uses(body), [])
+
+    def test_scan_tree_covers_both_yaml_extensions(self) -> None:
+        workflow = "jobs:\n  build:\n    steps:\n      - run: gh release view v1\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.yml").write_text(workflow, encoding="utf-8")
+            (root / "b.yaml").write_text(workflow, encoding="utf-8")
+            offenders = scan_tree(root)
+        self.assertEqual(len(offenders), 2)
+        self.assertTrue(any("a.yml" in hit for hit in offenders))
+        self.assertTrue(any("b.yaml" in hit for hit in offenders))
 
 
 if __name__ == "__main__":

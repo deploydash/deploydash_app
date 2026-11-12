@@ -50,7 +50,11 @@ prune_internal_assets() { # $1 = release id, $2 = tag
 }
 
 if [[ "${1:-}" == "--finish" ]]; then
-  finish_tag="${2:?usage: store_publish_watch.sh [--finish <tag>]}"
+  if [[ -z "${2:-}" ]]; then
+    echo "usage: store_publish_watch.sh [--finish <tag>]" >&2
+    exit 1
+  fi
+  finish_tag="$2"
   finish_row="$(gh api "repos/${REPO}/releases?per_page=100" --paginate \
     | jq -s --arg tag "${finish_tag}" 'add | map(select(.tag_name == $tag)) | first // empty')"
   [[ -n "${finish_row}" ]] || {

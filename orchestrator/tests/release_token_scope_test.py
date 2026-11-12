@@ -62,11 +62,16 @@ def _scopes(block: str) -> dict[str, str]:
             base_indent = len(match.group(1))
             continue
         if in_permissions:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
+            # Strip inline comments ("contents: write # why") before
+            # matching: a trailing comment otherwise ends the block
+            # early and silently drops later scopes. Permission values
+            # never contain '#' themselves.
+            content = line.split("#", 1)[0]
+            stripped = content.strip()
+            if not stripped:
                 continue
-            scope = _SCOPE.match(line)
-            if scope and len(line) - len(line.lstrip()) > base_indent:
+            scope = _SCOPE.match(content)
+            if scope and len(content) - len(content.lstrip()) > base_indent:
                 scopes[scope.group(1)] = scope.group(2)
             else:
                 in_permissions = False
@@ -119,6 +124,15 @@ def _effective(job_scopes: dict[str, str], top_scopes: dict[str, str], scope: st
 
 
 class ReleaseTokenScopeTest(unittest.TestCase):
+    def test_scopes_survive_inline_and_full_line_comments(self) -> None:
+        block = (
+            "    permissions:\n"
+            "      # a full-line comment\n"
+            "      contents: write # trailing comment\n"
+            "      actions: read\n"
+        )
+        self.assertEqual(_scopes(block), {"contents": "write", "actions": "read"})
+
     def test_draft_release_readers_grant_contents_write(self) -> None:
         offenders: list[str] = []
         for name in PIPELINE:
