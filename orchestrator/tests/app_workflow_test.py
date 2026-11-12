@@ -1492,8 +1492,9 @@ class TestAppWorkflow(unittest.TestCase):
         self.assertNotIn("--cap-drop ALL", run_commands[0])
         self.assertIn("--pids-limit 512", run_commands[0])
         self.assertIn("--entrypoint /bin/sh", run_commands[0])
-        self.assertIn(" -lc 'npm run worker:queue'", run_commands[0])
-        self.assertNotIn(" sh -lc 'npm run worker:queue'", run_commands[0])
+        self.assertIn(" -c 'npm run worker:queue'", run_commands[0])
+        self.assertNotIn(" sh -c 'npm run worker:queue'", run_commands[0])
+        self.assertNotIn("-lc ", run_commands[0])
 
     @patch("engine.create_runtime_session")
     def test_app_workers_apply_requires_existing_image(self, mock_create_runtime_session):
