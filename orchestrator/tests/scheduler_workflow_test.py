@@ -219,9 +219,9 @@ class TestSchedulerWorkflow(unittest.TestCase):
             "/opt/deploydash/stack/apps/.deploydash/apps/remix-blog/releases.json",
             joined,
         )
-        self.assertIn('docker exec "${LIVE_CONTAINER}" /bin/sh -lc', joined)
+        self.assertIn('docker exec "${LIVE_CONTAINER}" /bin/sh -c', joined)
         self.assertNotIn(
-            "docker exec deploydash_app_remix-blog /bin/sh -lc",
+            "docker exec deploydash_app_remix-blog /bin/sh -c",
             joined,
         )
         self.assertIn("php artisan schedule:run", joined)

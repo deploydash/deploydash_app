@@ -85,7 +85,7 @@ class TestSchedulerHelpers(unittest.TestCase):
                 )
                 self.assertIn("#!/bin/sh", text)
                 self.assertIn(
-                    "docker exec deploydash_app_test /bin/sh -lc",
+                    "docker exec deploydash_app_test /bin/sh -c",
                     text,
                 )
                 self.assertIn(shlex.quote(command), text)
@@ -105,12 +105,33 @@ class TestSchedulerHelpers(unittest.TestCase):
             "Deploy Dash could not find the live web app container",
             text,
         )
-        self.assertIn('docker exec "${LIVE_CONTAINER}" /bin/sh -lc', text)
+        self.assertIn('docker exec "${LIVE_CONTAINER}" /bin/sh -c', text)
         self.assertIn(shlex.quote("php -v"), text)
         self.assertNotIn(
-            "docker exec deploydash_app_test-app /bin/sh -lc",
+            "docker exec deploydash_app_test-app /bin/sh -c",
             text,
         )
+
+    def test_scheduler_scripts_use_non_login_shell(self):
+        # A login shell (`-l`) sources Debian's /etc/profile, which
+        # overwrites PATH and drops the image's baked entries (Railpack's
+        # /mise/shims), so plain `npm ...` / `php ...` scheduled commands
+        # fail to resolve. Non-login `sh -c` inherits the target
+        # container's ENV intact.
+        texts = (
+            engine_scheduler_ops._scheduler_script_text(
+                "deploydash_app_test",
+                "npm run cleanup",
+            ),
+            engine_scheduler_ops._web_app_scheduler_script_text(
+                "test-app",
+                "npm run cleanup",
+            ),
+        )
+        for text in texts:
+            with self.subTest(text=text):
+                self.assertIn("/bin/sh -c", text)
+                self.assertNotIn("-lc", text)
 
     def test_service_unit_text_runs_wrapper_script(self):
         text = engine_scheduler_ops._service_unit_text(
@@ -403,7 +424,7 @@ class TestSchedulerHelpers(unittest.TestCase):
             written_scripts[0][0],
             "/opt/deploydash/state/scheduler/deploydash-my-app-cleanup.sh",
         )
-        self.assertIn('docker exec "${LIVE_CONTAINER}" /bin/sh -lc', written_scripts[0][1])
+        self.assertIn('docker exec "${LIVE_CONTAINER}" /bin/sh -c', written_scripts[0][1])
         self.assertIn(shlex.quote("php -v"), written_scripts[0][1])
 
     def test_run_operation_task_run_now_returns_failure_with_output(self):
@@ -509,7 +530,7 @@ class TestSchedulerHelpers(unittest.TestCase):
             written_scripts[0][0],
             "/opt/deploydash/state/scheduler/deploydash-my-app-cleanup.sh",
         )
-        self.assertIn('docker exec "${LIVE_CONTAINER}" /bin/sh -lc', written_scripts[0][1])
+        self.assertIn('docker exec "${LIVE_CONTAINER}" /bin/sh -c', written_scripts[0][1])
         self.assertIn(shlex.quote("php -v"), written_scripts[0][1])
         self.assertEqual(result["task_statuses"][0]["task_id"], "cleanup")
 

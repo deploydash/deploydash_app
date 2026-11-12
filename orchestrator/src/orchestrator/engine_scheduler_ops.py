@@ -158,10 +158,14 @@ def _task_container_name(project_slug, target_type, target_ref):
 def _scheduler_script_text(container_name, command_text):
     quoted_container = shlex.quote(container_name)
     quoted_command = shlex.quote(command_text)
+    # Non-login `sh -c` on purpose: a login shell sources Debian's
+    # /etc/profile, which overwrites PATH and drops the image's baked
+    # entries (Railpack's /mise/shims), so plain `npm ...` / `php ...`
+    # scheduled commands fail to resolve.
     return (
         "#!/bin/sh\n"
         "set -eu\n"
-        f"exec /usr/bin/docker exec {quoted_container} /bin/sh -lc {quoted_command}\n"
+        f"exec /usr/bin/docker exec {quoted_container} /bin/sh -c {quoted_command}\n"
     )
 
 
@@ -214,7 +218,8 @@ def _web_app_scheduler_script_text(project_slug, command_text):
         "  echo 'Deploy Dash could not find the live web app container for this scheduled job.' >&2\n"
         "  exit 1\n"
         "fi\n"
-        f'exec /usr/bin/docker exec "${{LIVE_CONTAINER}}" /bin/sh -lc {quoted_command}\n'
+        # Non-login shell: see _scheduler_script_text.
+        f'exec /usr/bin/docker exec "${{LIVE_CONTAINER}}" /bin/sh -c {quoted_command}\n'
     )
 
 
