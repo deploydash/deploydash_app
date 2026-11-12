@@ -245,7 +245,7 @@ void main() {
       );
     });
 
-    test('fresh schema 2 isolates credentials from server rows', () async {
+    test('fresh schema 3 isolates credentials from server rows', () async {
       final server = await servers.createServer(
         draft: const ServerDraft(
           name: 'Production',
@@ -262,7 +262,7 @@ void main() {
       final version = await database
           .customSelect('PRAGMA user_version;')
           .getSingle();
-      expect(version.data['user_version'], 2);
+      expect(version.data['user_version'], 3);
 
       final credentialRows = await database
           .customSelect(
@@ -292,7 +292,7 @@ void main() {
         }),
         isEmpty,
       );
-      expect(database.schemaVersion, 2);
+      expect(database.schemaVersion, 3);
     });
   });
 }

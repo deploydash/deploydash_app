@@ -145,7 +145,7 @@ void main() {
         isNull,
       );
       expect(database.schemaVersion, appDatabaseSchemaVersion);
-      expect(appDatabaseSchemaVersion, 2);
+      expect(appDatabaseSchemaVersion, 3);
     },
     skip: !sqliteAvailable,
   );

@@ -37,7 +37,7 @@ void main() {
 
         debugRepairMissingAppDatabaseUserVersion(rawDb);
 
-        expect(rawDb.select('PRAGMA user_version;').single.columnAt(0), 2);
+        expect(rawDb.select('PRAGMA user_version;').single.columnAt(0), 3);
       } finally {
         rawDb.close();
       }

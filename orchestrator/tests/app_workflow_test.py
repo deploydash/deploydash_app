@@ -1458,9 +1458,9 @@ class TestAppWorkflow(unittest.TestCase):
                                 "cpu_limit": 1.5,
                                 "memory_mb": 512,
                                 "disk_mb": 2048,
-                                "database_user": "app_rw",
-                                "database_name": "app_db",
-                                "database_password": "pw-123",
+                                "environment": {
+                                    "DATABASE_URL": "postgresql://db/one",
+                                },
                             }
                         ],
                         "runtime_env": {"WORKER_MODE": "queue"},
@@ -1484,8 +1484,7 @@ class TestAppWorkflow(unittest.TestCase):
             and "deploydash_worker_remix-blog_queue-worker" in command
         ]
         self.assertEqual(len(run_commands), 1)
-        self.assertIn("-e DATABASE_ENGINE=postgres", run_commands[0])
-        self.assertIn("-e DATABASE_HOST=host.docker.internal", run_commands[0])
+        self.assertIn("-e DATABASE_URL=postgresql://db/one", run_commands[0])
         self.assertIn("WORKER_MODE=queue", run_commands[0])
         self.assertIn('WORKER_NETWORK="$(docker inspect -f ', run_commands[0])
         self.assertIn('--network "${WORKER_NETWORK}"', run_commands[0])

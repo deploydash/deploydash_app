@@ -558,17 +558,9 @@ class TestOneOwnerPerConcept(unittest.TestCase):
 # removes it and is pinned to the member count observed then, so a new copy
 # in an already-listed file still fails. The list may only shrink.
 _IN_FILE_NEAR_DUPLICATE_EXEMPTIONS: dict[str, _NameBodyExemption] = {
-    # Was `app_parts/app_config.py` until T-3.3.4 split the validators out.
-    # The family moved with them; the count fell 5 -> 4 because one of the
-    # five stayed behind with the resolved values.
-    "app_parts/app_config_fields.py": _NameBodyExemption(
-        reason=(
-            "B-3 collapses the _optional_<thing> regex validators into one "
-            "parameterised helper. Not covered by T-3.8.1, which owns the "
-            "cross-module _required_*/_optional_string family instead."
-        ),
-        source_count=4,
-    ),
+    # `app_parts/app_config_fields.py` was listed here until the worker
+    # environment-variables change collapsed the _optional_<thing> regex
+    # validators into _optional_pattern_string (B-3).
     "engine.py": _NameBodyExemption(
         reason=(
             "B-2 collapses the twenty facade forwarders that inject "
@@ -595,7 +587,7 @@ _IN_FILE_NEAR_DUPLICATE_EXEMPTIONS: dict[str, _NameBodyExemption] = {
 # Pinned separately from _ONE_OWNER_EXEMPTION_BASELINE_COUNT: this map keys on
 # file rather than on a name/source-count pair, so a shared total would let a
 # collapse here pay for a new exemption there.
-_IN_FILE_NEAR_DUPLICATE_BASELINE_COUNT = 4
+_IN_FILE_NEAR_DUPLICATE_BASELINE_COUNT = 3
 
 
 if __name__ == "__main__":

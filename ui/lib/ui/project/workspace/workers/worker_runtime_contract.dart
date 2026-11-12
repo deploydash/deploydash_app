@@ -1,15 +1,29 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 import '../../../../providers/worker_instance_provider.dart';
 import '../../../../domain/worker_runtime_snapshot.dart';
 
 export '../../../../domain/worker_runtime_snapshot.dart';
 
-const String workerRuntimeDefaultDatabaseHost = 'host.docker.internal';
-const int workerRuntimeDefaultDatabasePort = 5432;
+/// Fingerprint of a worker's environment for applied-state comparison.
+///
+/// The backend stamps the same hex digest on each snapshot row (see
+/// `release_observability._environment_fingerprint`), so the desktop can
+/// tell a changed environment from an applied one without values ever
+/// travelling in status payloads. Canonical form: `key=value` lines for
+/// keys in byte order, joined by `\n`. Keys are ASCII-only and values
+/// never contain a newline (the backend rejects them), so the form is
+/// unambiguous on both sides.
+String workerEnvironmentFingerprint(Map<String, String> environment) {
+  final keys = environment.keys.toList()..sort();
+  final canonical = keys.map((key) => '$key=${environment[key]}').join('\n');
+  return sha256.convert(utf8.encode(canonical)).toString();
+}
 
 List<Map<String, dynamic>> buildWorkersWorkflowPayload({
   required List<ProjectWorkerInstance> workers,
-  String defaultDatabaseHost = workerRuntimeDefaultDatabaseHost,
-  int defaultDatabasePort = workerRuntimeDefaultDatabasePort,
 }) {
   final normalized = <Map<String, dynamic>>[];
   for (final worker in workers) {
@@ -29,24 +43,8 @@ List<Map<String, dynamic>> buildWorkersWorkflowPayload({
       'enabled': worker.enabled,
     };
 
-    final databaseUser = worker.databaseUser?.trim();
-    final databaseName = worker.databaseName?.trim();
-    final databasePassword = worker.databasePassword?.trim();
-    final databaseEngine = worker.databaseEngine?.trim().toLowerCase();
-    if (databaseUser != null &&
-        databaseUser.isNotEmpty &&
-        databaseName != null &&
-        databaseName.isNotEmpty &&
-        databasePassword != null &&
-        databasePassword.isNotEmpty) {
-      if (databaseEngine == null || databaseEngine == 'postgres') {
-        entry['database_engine'] = 'postgres';
-        entry['database_user'] = databaseUser;
-        entry['database_name'] = databaseName;
-        entry['database_password'] = databasePassword;
-        entry['database_host'] = defaultDatabaseHost;
-        entry['database_port'] = defaultDatabasePort;
-      }
+    if (worker.environment.isNotEmpty) {
+      entry['environment'] = Map<String, String>.of(worker.environment);
     }
 
     normalized.add(entry);
@@ -73,12 +71,16 @@ bool workerRuntimeSnapshotMatches({
   };
   for (final worker in workers) {
     final row = observedById[worker.id.trim()];
+    // A row without a fingerprint predates environment tracking and can
+    // never match: one apply re-baselines it.
+    final fingerprint = row?['environment_sha256']?.toString();
     if (row == null ||
         row['start_cmd']?.toString() != worker.startCommand ||
         row['enabled'] != worker.enabled ||
         !numericValueMatches(row['cpu_limit'], worker.cpuLimit) ||
         !numericValueMatches(row['memory_mb'], worker.memoryMb) ||
-        !numericValueMatches(row['disk_mb'], worker.diskMb)) {
+        !numericValueMatches(row['disk_mb'], worker.diskMb) ||
+        fingerprint != workerEnvironmentFingerprint(worker.environment)) {
       return false;
     }
   }

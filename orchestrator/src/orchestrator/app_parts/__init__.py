@@ -35,17 +35,11 @@ _WORKER_SCHEMA = {
         "memory_mb": {"type": "integer", "minimum": 128, "maximum": 1048576},
         "disk_mb": {"type": "integer", "minimum": 256, "maximum": 1048576},
         "enabled": {"type": "boolean"},
-        "database_user": {"type": ["string", "null"]},
-        "database_name": {"type": ["string", "null"]},
-        "database_password": {"type": ["string", "null"]},
-        "database_engine": {"type": ["string", "null"], "enum": ["postgres", None]},
-        "database_host": {"type": ["string", "null"]},
-        "database_port": {"type": ["integer", "null"], "minimum": 1, "maximum": 65535},
-    },
-    "dependentRequired": {
-        "database_user": ["database_name", "database_password"],
-        "database_name": ["database_user", "database_password"],
-        "database_password": ["database_user", "database_name"],
+        "environment": {
+            "type": ["object", "null"],
+            "propertyNames": {"pattern": r"^[A-Za-z_][A-Za-z0-9_]*$"},
+            "additionalProperties": {"type": "string"},
+        },
     },
 }
 

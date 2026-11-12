@@ -538,9 +538,10 @@ class TestAppConfig(unittest.TestCase):
                             "memory_mb": 512,
                             "disk_mb": 2048,
                             "enabled": True,
-                            "database_user": "app_rw",
-                            "database_name": "app_db",
-                            "database_password": "pw-123",
+                            "environment": {
+                                "DATABASE_URL": "postgresql://db/one",
+                                "ANOTHER_KEY": "another value",
+                            },
                         },
                         {
                             "id": "email-worker",
@@ -558,16 +559,20 @@ class TestAppConfig(unittest.TestCase):
         self.assertEqual(len(config.workers), 2)
         queue = config.workers[0]
         self.assertEqual(queue.id, "queue-worker")
-        self.assertEqual(queue.database_user, "app_rw")
-        self.assertEqual(queue.database_name, "app_db")
-        self.assertEqual(queue.database_host, "host.docker.internal")
-        self.assertEqual(queue.database_port, 5432)
+        self.assertEqual(
+            queue.environment,
+            {
+                "DATABASE_URL": "postgresql://db/one",
+                "ANOTHER_KEY": "another value",
+            },
+        )
         email = config.workers[1]
         self.assertEqual(email.id, "email-worker")
         self.assertFalse(email.enabled)
+        self.assertEqual(email.environment, {})
 
-    def test_parse_rejects_worker_without_required_database_user(self):
-        with self.assertRaises(AppConfigValidationError):
+    def test_parse_rejects_worker_environment_when_not_an_object(self):
+        with self.assertRaises(AppConfigValidationError) as raised:
             parse_app_config(
                 {
                     "settings": {
@@ -578,14 +583,56 @@ class TestAppConfig(unittest.TestCase):
                                 "cpu_limit": 1,
                                 "memory_mb": 512,
                                 "disk_mb": 1024,
-                                "database_name": "app_db",
-                                "database_password": "pw-123",
+                                "environment": ["DATABASE_URL=x"],
                             }
                         ]
                     }
                 },
                 require_domain=True,
             )
+        self.assertIn("environment", str(raised.exception))
+
+    def test_parse_rejects_worker_environment_with_invalid_key(self):
+        with self.assertRaises(AppConfigValidationError) as raised:
+            parse_app_config(
+                {
+                    "settings": {
+                        "workers": [
+                            {
+                                "id": "queue-worker",
+                                "start_cmd": "npm run worker:queue",
+                                "cpu_limit": 1,
+                                "memory_mb": 512,
+                                "disk_mb": 1024,
+                                "environment": {"9BAD": "x"},
+                            }
+                        ]
+                    }
+                },
+                require_domain=True,
+            )
+        self.assertIn("9BAD", str(raised.exception))
+
+    def test_parse_rejects_worker_environment_with_non_string_value(self):
+        with self.assertRaises(AppConfigValidationError) as raised:
+            parse_app_config(
+                {
+                    "settings": {
+                        "workers": [
+                            {
+                                "id": "queue-worker",
+                                "start_cmd": "npm run worker:queue",
+                                "cpu_limit": 1,
+                                "memory_mb": 512,
+                                "disk_mb": 1024,
+                                "environment": {"PORT": 5432},
+                            }
+                        ]
+                    }
+                },
+                require_domain=True,
+            )
+        self.assertIn("PORT", str(raised.exception))
 
     def test_parse_defaults_to_http_tls_challenge(self):
         config = parse_app_config({}, require_domain=True)

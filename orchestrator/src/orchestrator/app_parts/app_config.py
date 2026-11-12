@@ -353,12 +353,7 @@ def parse_app_config(raw_data, require_domain=True):
                 memory_mb=256,
                 disk_mb=1024,
                 enabled=True,
-                database_user=None,
-                database_name=None,
-                database_password=None,
-                database_engine=None,
-                database_host=None,
-                database_port=None,
+                environment={},
             ),
         )
     caddy_stack_root = _required_string(

@@ -21,7 +21,7 @@ void main() {
     test('the schema version is the collapsed value', () {
       // Stated as a literal on purpose. Asserting against the constant would
       // only prove the constant equals itself.
-      expect(appDatabaseSchemaVersion, 2);
+      expect(appDatabaseSchemaVersion, 3);
     });
   });
 }

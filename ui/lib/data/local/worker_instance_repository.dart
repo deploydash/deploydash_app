@@ -1,15 +1,16 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../utils/dedupe_rows.dart';
-import '../../utils/trim_or_null.dart';
 import 'app_database.dart';
 
 /// One background worker a project runs alongside its web app.
 ///
 /// A worker is a long-running command in its own container -- a queue consumer,
 /// a scheduler daemon -- with its own resource limits and, optionally, its own
-/// managed database user.
+/// extra environment variables.
 class WorkerInstanceRecord {
   /// Creates one worker definition.
   const WorkerInstanceRecord({
@@ -20,10 +21,7 @@ class WorkerInstanceRecord {
     this.cpuLimit = 0.5,
     this.memoryMb = 256,
     this.diskMb = 1024,
-    this.databaseUser,
-    this.databaseName,
-    this.databasePassword,
-    this.databaseEngine,
+    this.environment = const <String, String>{},
     this.enabled = true,
     this.sortOrder = 0,
   });
@@ -52,22 +50,9 @@ class WorkerInstanceRecord {
   /// Disk in MB, clamped to 256-1048576.
   final int diskMb;
 
-  /// The managed database user this worker connects as, when it has one.
-  ///
-  /// The four database fields stand or fall together: without a user, the
-  /// other three are cleared on save rather than kept as a partial credential.
-  final String? databaseUser;
-
-  /// The database that user connects to.
-  final String? databaseName;
-
-  /// That user's password.
-  final String? databasePassword;
-
-  /// Which engine, or null. Only `postgres` is recognised; anything else
-  /// normalizes to null rather than being stored as an engine nothing
-  /// implements.
-  final String? databaseEngine;
+  /// Extra variables injected into the worker container, insertion-ordered.
+  /// Empty means none.
+  final Map<String, String> environment;
 
   /// Whether the worker should be running.
   final bool enabled;
@@ -109,10 +94,7 @@ class WorkerInstanceRepository {
             cpuLimit: row.cpuLimit,
             memoryMb: row.memoryMb,
             diskMb: row.diskMb,
-            databaseUser: trimOrNull(row.databaseUser),
-            databaseName: trimOrNull(row.databaseName),
-            databasePassword: trimOrNull(row.databasePassword),
-            databaseEngine: _normalizeDatabaseEngine(row.databaseEngine),
+            environment: _decodeEnvironment(row.environmentJson),
             enabled: row.enabled,
             sortOrder: row.sortOrder,
           ),
@@ -148,7 +130,6 @@ class WorkerInstanceRepository {
       },
       rebuild: (row, id) {
         final startCommand = row.startCommand.trim();
-        final databaseUser = trimOrNull(row.databaseUser);
         return WorkerInstanceRecord(
           id: id,
           projectId: normalizedProjectId,
@@ -157,16 +138,7 @@ class WorkerInstanceRepository {
           cpuLimit: _clampNum(row.cpuLimit, 0.1, 64.0, 0.5),
           memoryMb: _clampNum(row.memoryMb, 128, 1024 * 1024, 128),
           diskMb: _clampNum(row.diskMb, 256, 1024 * 1024, 256),
-          databaseUser: databaseUser,
-          databaseName: databaseUser == null
-              ? null
-              : trimOrNull(row.databaseName),
-          databasePassword: databaseUser == null
-              ? null
-              : trimOrNull(row.databasePassword),
-          databaseEngine: databaseUser == null
-              ? null
-              : _normalizeDatabaseEngine(row.databaseEngine),
+          environment: Map<String, String>.of(row.environment),
           enabled: row.enabled,
           sortOrder: row.sortOrder,
         );
@@ -192,10 +164,9 @@ class WorkerInstanceRepository {
                 cpuLimit: Value(row.cpuLimit),
                 memoryMb: Value(row.memoryMb),
                 diskMb: Value(row.diskMb),
-                databaseUser: Value(row.databaseUser),
-                databaseName: Value(row.databaseName),
-                databasePassword: Value(row.databasePassword),
-                databaseEngine: Value(row.databaseEngine),
+                environmentJson: Value(
+                  row.environment.isEmpty ? null : jsonEncode(row.environment),
+                ),
                 enabled: Value(row.enabled),
                 sortOrder: Value(index),
                 createdAt: Value(now),
@@ -206,12 +177,29 @@ class WorkerInstanceRepository {
     });
   }
 
-  static String? _normalizeDatabaseEngine(String? value) {
-    final normalized = value?.trim().toLowerCase();
-    if (normalized == 'postgres') {
-      return 'postgres';
+  /// Decodes the stored environment object, tolerating anything else.
+  ///
+  /// Only this repository reads the column and only it writes it, so a
+  /// non-object (or non-string entry) means a hand-edited file. Dropping
+  /// the unreadable part beats failing the whole worker list; values are
+  /// never trimmed or altered on the way in.
+  static Map<String, String> _decodeEnvironment(String? raw) {
+    if (raw == null || raw.trim().isEmpty) {
+      return const <String, String>{};
     }
-    return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return const <String, String>{};
+      }
+      return <String, String>{
+        for (final entry in decoded.entries)
+          if (entry.key is String && entry.value is String)
+            entry.key as String: entry.value as String,
+      };
+    } on FormatException {
+      return const <String, String>{};
+    }
   }
 
   /// Clamps [value] into [[min], [max]], falling back on non-finite input.

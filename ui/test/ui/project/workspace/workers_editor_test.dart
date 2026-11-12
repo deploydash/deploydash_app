@@ -171,13 +171,7 @@ void main() {
       final sshService = WorkersWorkflowSshService(
         projectListResponse: const <String, dynamic>{
           'status': 'success',
-          'users': [
-            {
-              'username': 'app_rw',
-              'database': 'app_db',
-              'access_mode': 'read_write',
-            },
-          ],
+          'users': <dynamic>[],
         },
         statusResponse: const <String, dynamic>{
           'status': 'success',
@@ -188,10 +182,6 @@ void main() {
           'msg': 'Applied.',
           'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
         },
-      );
-      await seedManagedPostgresCatalog(
-        database,
-        projectListResponse: sshService.projectListResponse,
       );
 
       await pumpProjectWorkspace(
@@ -222,11 +212,12 @@ void main() {
         find.byKey(const Key('workers-editor-command-field')),
         'npm run worker:queue',
       );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('workers-editor-db-password-field')),
-        findsNothing,
+      await tester.enterText(
+        find.byKey(const Key('workers-editor-environment-field')),
+        'DATABASE_URL=postgresql://db/one\nANOTHER_KEY=another value',
       );
+      await tester.pumpAndSettle();
+      expect(find.text('2 variables'), findsOneWidget);
 
       final saveButton = tester.widget<FilledButton>(
         find.byKey(const Key('workers-editor-save-button')),
@@ -237,7 +228,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Queue worker'), findsOneWidget);
-      expect(sshService.projectListCalls, 0);
 
       final records = await WorkerInstanceRepository(
         database,
@@ -249,13 +239,14 @@ void main() {
       expect(saved.cpuLimit, 0.5);
       expect(saved.memoryMb, 256);
       expect(saved.diskMb, 1024);
-      expect(saved.databaseUser, isNull);
-      expect(saved.databaseName, isNull);
-      expect(saved.databasePassword, isNull);
+      expect(saved.environment, {
+        'DATABASE_URL': 'postgresql://db/one',
+        'ANOTHER_KEY': 'another value',
+      });
     });
 
     testWidgets(
-      'Workers tab add flow persists selected database access and toggle state',
+      'Workers tab add flow persists environment variables and toggle state',
       (WidgetTester tester) async {
         final database = AppDatabase.forTesting(NativeDatabase.memory());
         addTearDown(() async {
@@ -265,13 +256,7 @@ void main() {
         final sshService = WorkersWorkflowSshService(
           projectListResponse: const <String, dynamic>{
             'status': 'success',
-            'users': [
-              {
-                'username': 'app_rw',
-                'database': 'app_db',
-                'access_mode': 'read_write',
-              },
-            ],
+            'users': <dynamic>[],
           },
           statusResponse: const <String, dynamic>{
             'status': 'success',
@@ -281,10 +266,6 @@ void main() {
             'status': 'success',
             'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
           },
-        );
-        await seedManagedPostgresCatalog(
-          database,
-          projectListResponse: sshService.projectListResponse,
         );
 
         await pumpProjectWorkspace(
@@ -316,17 +297,9 @@ void main() {
           find.byKey(const Key('workers-editor-enabled-toggle')),
         );
         await tester.pumpAndSettle();
-        await tester.tap(
-          find.byKey(const Key('workers-editor-db-user-dropdown')),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(
-          find.text('PostgreSQL · app_rw on app_db (Read and write)').last,
-        );
-        await tester.pumpAndSettle();
         await tester.enterText(
-          find.byKey(const Key('workers-editor-db-password-field')),
-          'postgres-secret',
+          find.byKey(const Key('workers-editor-environment-field')),
+          'DATABASE_URL=postgresql://db/one',
         );
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const Key('workers-editor-save-button')));
@@ -338,15 +311,12 @@ void main() {
         expect(records, hasLength(1));
         final saved = records.single;
         expect(saved.enabled, isFalse);
-        expect(saved.databaseUser, 'app_rw');
-        expect(saved.databaseName, 'app_db');
-        expect(saved.databasePassword, 'postgres-secret');
-        expect(saved.databaseEngine, 'postgres');
+        expect(saved.environment, {'DATABASE_URL': 'postgresql://db/one'});
       },
     );
 
     testWidgets(
-      'Workers editor clears database password when access is removed',
+      'Workers editor clears the environment when the box is emptied',
       (WidgetTester tester) async {
         final database = AppDatabase.forTesting(NativeDatabase.memory());
         addTearDown(() async {
@@ -356,13 +326,7 @@ void main() {
         final sshService = WorkersWorkflowSshService(
           projectListResponse: const <String, dynamic>{
             'status': 'success',
-            'users': [
-              {
-                'username': 'app_rw',
-                'database': 'app_db',
-                'access_mode': 'read_write',
-              },
-            ],
+            'users': <dynamic>[],
           },
           statusResponse: const <String, dynamic>{
             'status': 'success',
@@ -372,10 +336,6 @@ void main() {
             'status': 'success',
             'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
           },
-        );
-        await seedManagedPostgresCatalog(
-          database,
-          projectListResponse: sshService.projectListResponse,
         );
 
         await pumpProjectWorkspace(
@@ -402,37 +362,107 @@ void main() {
           find.byKey(const Key('workers-editor-command-field')),
           'npm run worker:queue',
         );
-        await tester.tap(
-          find.byKey(const Key('workers-editor-db-user-dropdown')),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(
-          find.text('PostgreSQL · app_rw on app_db (Read and write)').last,
-        );
-        await tester.pumpAndSettle();
         await tester.enterText(
-          find.byKey(const Key('workers-editor-db-password-field')),
-          'postgres-secret',
-        );
-        await tester.tap(
-          find.byKey(const Key('workers-editor-db-user-dropdown')),
+          find.byKey(const Key('workers-editor-environment-field')),
+          'DATABASE_URL=postgresql://db/one',
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.text('No database access').last);
+        expect(find.text('1 variable'), findsOneWidget);
+        await tester.enterText(
+          find.byKey(const Key('workers-editor-environment-field')),
+          '',
+        );
         await tester.pumpAndSettle();
+        expect(find.text('1 variable'), findsNothing);
 
-        expect(
-          find.byKey(const Key('workers-editor-db-password-field')),
-          findsNothing,
-        );
         await tester.tap(find.byKey(const Key('workers-editor-save-button')));
         await tester.pumpAndSettle();
 
         final records = await WorkerInstanceRepository(
           database,
         ).listForProject(selectedProject.id);
-        expect(records.single.databaseUser, isNull);
-        expect(records.single.databasePassword, isNull);
+        expect(records.single.environment, isEmpty);
+      },
+    );
+
+    testWidgets(
+      'Workers editor blocks saving while the environment box has an error',
+      (WidgetTester tester) async {
+        final database = AppDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(() async {
+          await database.close();
+        });
+
+        final sshService = WorkersWorkflowSshService(
+          projectListResponse: const <String, dynamic>{
+            'status': 'success',
+            'users': <dynamic>[],
+          },
+          statusResponse: const <String, dynamic>{
+            'status': 'success',
+            'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
+          },
+          applyResponse: const <String, dynamic>{
+            'status': 'success',
+            'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
+          },
+        );
+
+        await pumpProjectWorkspace(
+          tester,
+          database: database,
+          overrides: [
+            selectedProjectProvider.overrideWithValue(
+              selectedProjectWithLiveRuntime,
+            ),
+            selectedServerProvider.overrideWithValue(serverWithDatabaseEnabled),
+            sshServiceProvider.overrideWithValue(sshService),
+          ],
+        );
+
+        await tester.tap(find.widgetWithText(Tab, 'Workers'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('workers-add-button')));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const Key('workers-editor-name-field')),
+          'Queue worker',
+        );
+        await tester.enterText(
+          find.byKey(const Key('workers-editor-command-field')),
+          'npm run worker:queue',
+        );
+        await tester.enterText(
+          find.byKey(const Key('workers-editor-environment-field')),
+          'GOOD=1\nNOT A VARIABLE',
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('Line 2'), findsOneWidget);
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.byKey(const Key('workers-editor-save-button')),
+              )
+              .onPressed,
+          isNull,
+        );
+
+        await tester.enterText(
+          find.byKey(const Key('workers-editor-environment-field')),
+          'GOOD=1\nFIXED=2',
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('2 variables'), findsOneWidget);
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.byKey(const Key('workers-editor-save-button')),
+              )
+              .onPressed,
+          isNotNull,
+        );
       },
     );
 
@@ -585,7 +615,7 @@ void main() {
     });
 
     testWidgets(
-      'Workers tab add flow sorts database users, resolves id collisions, and surfaces save failures',
+      'Workers tab add flow resolves id collisions and surfaces save failures',
       (WidgetTester tester) async {
         final database = AppDatabase.forTesting(NativeDatabase.memory());
         var databaseClosed = false;
@@ -624,23 +654,7 @@ void main() {
         final sshService = WorkersWorkflowSshService(
           projectListResponse: const <String, dynamic>{
             'status': 'success',
-            'users': [
-              {
-                'username': 'beta_user',
-                'database': 'app_b',
-                'access_mode': 'read_write',
-              },
-              {
-                'username': 'gamma_user',
-                'database': 'app_a',
-                'access_mode': 'read_write',
-              },
-              {
-                'username': 'alpha_user',
-                'database': 'app_a',
-                'access_mode': 'read_write',
-              },
-            ],
+            'users': <dynamic>[],
           },
           statusResponse: const <String, dynamic>{
             'status': 'success',
@@ -650,10 +664,6 @@ void main() {
             'status': 'success',
             'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
           },
-        );
-        await seedManagedPostgresCatalog(
-          database,
-          projectListResponse: sshService.projectListResponse,
         );
 
         await pumpProjectWorkspace(
@@ -693,22 +703,6 @@ void main() {
           find.byKey(const Key('workers-editor-disk-field')),
           '4096',
         );
-        await tester.tap(
-          find.byKey(const Key('workers-editor-db-user-dropdown')),
-        );
-        await tester.pumpAndSettle();
-        final alphaOffset = tester.getTopLeft(
-          find.text('PostgreSQL · alpha_user on app_a (Read and write)').last,
-        );
-        final gammaOffset = tester.getTopLeft(
-          find.text('PostgreSQL · gamma_user on app_a (Read and write)').last,
-        );
-        final betaOffset = tester.getTopLeft(
-          find.text('PostgreSQL · beta_user on app_b (Read and write)').last,
-        );
-        expect(alphaOffset.dy, lessThan(gammaOffset.dy));
-        expect(gammaOffset.dy, lessThan(betaOffset.dy));
-        await tester.tap(find.text('No database access').last);
         await tester.pumpAndSettle();
 
         final saveButton = tester.widget<FilledButton>(
@@ -729,47 +723,48 @@ void main() {
       },
     );
 
-    testWidgets('Workers tab keeps DB users local when re-entering the tab', (
-      WidgetTester tester,
-    ) async {
-      final sshService = WorkersWorkflowSshService(
-        projectListResponse: const <String, dynamic>{
-          'status': 'success',
-          'users': <dynamic>[],
-        },
-        statusResponse: const <String, dynamic>{
-          'status': 'success',
-          'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
-        },
-        applyResponse: const <String, dynamic>{
-          'status': 'success',
-          'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
-        },
-      );
+    testWidgets(
+      'Workers tab makes no user-list calls when re-entering the tab',
+      (WidgetTester tester) async {
+        final sshService = WorkersWorkflowSshService(
+          projectListResponse: const <String, dynamic>{
+            'status': 'success',
+            'users': <dynamic>[],
+          },
+          statusResponse: const <String, dynamic>{
+            'status': 'success',
+            'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
+          },
+          applyResponse: const <String, dynamic>{
+            'status': 'success',
+            'workers': {'configured': <dynamic>[], 'orphans': <dynamic>[]},
+          },
+        );
 
-      await pumpProjectWorkspace(
-        tester,
-        overrides: [
-          selectedProjectProvider.overrideWithValue(selectedProject),
-          selectedServerProvider.overrideWithValue(serverWithDatabaseEnabled),
-          sshServiceProvider.overrideWithValue(sshService),
-        ],
-      );
+        await pumpProjectWorkspace(
+          tester,
+          overrides: [
+            selectedProjectProvider.overrideWithValue(selectedProject),
+            selectedServerProvider.overrideWithValue(serverWithDatabaseEnabled),
+            sshServiceProvider.overrideWithValue(sshService),
+          ],
+        );
 
-      await tester.tap(find.widgetWithText(Tab, 'Workers'));
-      await tester.pumpAndSettle();
-      final initialProjectListCalls = sshService.projectListCalls;
+        await tester.tap(find.widgetWithText(Tab, 'Workers'));
+        await tester.pumpAndSettle();
+        final initialProjectListCalls = sshService.projectListCalls;
 
-      await tester.tap(find.widgetWithText(Tab, 'Web app'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(Tab, 'Workers'));
-      await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(Tab, 'Web app'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(Tab, 'Workers'));
+        await tester.pumpAndSettle();
 
-      expect(sshService.projectListCalls, initialProjectListCalls);
-    });
+        expect(sshService.projectListCalls, initialProjectListCalls);
+      },
+    );
 
     testWidgets(
-      'Workers workspace keeps database wiring inside the worker editor modal',
+      'Workers workspace keeps environment values inside the worker editor modal',
       (WidgetTester tester) async {
         final database = AppDatabase.forTesting(NativeDatabase.memory());
         addTearDown(() async {
@@ -786,9 +781,7 @@ void main() {
               cpuLimit: 1.0,
               memoryMb: 512,
               diskMb: 2048,
-              databaseUser: 'app_rw',
-              databaseName: 'app_db',
-              databasePassword: 'secret-123',
+              environment: const {'DATABASE_URL': 'postgresql://db/one'},
               enabled: true,
               sortOrder: 0,
             ),
@@ -798,13 +791,7 @@ void main() {
         final sshService = WorkersWorkflowSshService(
           projectListResponse: const <String, dynamic>{
             'status': 'success',
-            'users': [
-              {
-                'username': 'app_rw',
-                'database': 'app_db',
-                'access_mode': 'read_write',
-              },
-            ],
+            'users': <dynamic>[],
           },
           statusResponse: const <String, dynamic>{
             'status': 'success',
@@ -839,13 +826,9 @@ void main() {
 
         final row = find.byKey(const Key('worker-row-queue-worker'));
         expect(
-          find.descendant(of: row, matching: find.text('Database')),
-          findsNothing,
-        );
-        expect(
           find.descendant(
             of: row,
-            matching: find.textContaining('app_rw on app_db'),
+            matching: find.textContaining('postgresql://db/one'),
           ),
           findsNothing,
         );
@@ -854,19 +837,23 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(
-          find.byKey(const Key('workers-editor-db-user-dropdown')),
+          find.byKey(const Key('workers-editor-environment-field')),
           findsOneWidget,
         );
         expect(
-          find.byKey(const Key('workers-editor-db-password-field')),
-          findsOneWidget,
+          tester
+              .widget<TextFormField>(
+                find.byKey(const Key('workers-editor-environment-field')),
+              )
+              .controller
+              ?.text,
+          'DATABASE_URL=postgresql://db/one',
         );
-        expect(find.text('Database password'), findsOneWidget);
       },
     );
 
     testWidgets(
-      'Workers tab edit flow updates worker fields and persists selected database wiring',
+      'Workers tab edit flow updates worker fields and persists environment edits',
       (WidgetTester tester) async {
         final database = AppDatabase.forTesting(NativeDatabase.memory());
         addTearDown(() async {
@@ -892,18 +879,7 @@ void main() {
         final sshService = WorkersWorkflowSshService(
           projectListResponse: const <String, dynamic>{
             'status': 'success',
-            'users': [
-              {
-                'username': 'alpha_user',
-                'database': 'app_a',
-                'access_mode': 'read_write',
-              },
-              {
-                'username': 'gamma_user',
-                'database': 'app_a',
-                'access_mode': 'read_write',
-              },
-            ],
+            'users': <dynamic>[],
           },
           statusResponse: const <String, dynamic>{
             'status': 'success',
@@ -948,6 +924,11 @@ void main() {
           'npm run worker:priority',
         );
         await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const Key('workers-editor-environment-field')),
+          'DATABASE_URL=postgresql://db/one',
+        );
+        await tester.pumpAndSettle();
         await tester.tap(find.byKey(const Key('workers-editor-save-button')));
         await tester.pumpAndSettle();
 
@@ -958,6 +939,7 @@ void main() {
         final saved = records.single;
         expect(saved.name, 'Queue worker updated');
         expect(saved.startCommand, 'npm run worker:priority');
+        expect(saved.environment, {'DATABASE_URL': 'postgresql://db/one'});
       },
     );
 

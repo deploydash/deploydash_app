@@ -16137,6 +16137,17 @@ class $WorkerInstancesTable extends WorkerInstances
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _environmentJsonMeta = const VerificationMeta(
+    'environmentJson',
+  );
+  @override
+  late final GeneratedColumn<String> environmentJson = GeneratedColumn<String>(
+    'environment_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _enabledMeta = const VerificationMeta(
     'enabled',
   );
@@ -16201,6 +16212,7 @@ class $WorkerInstancesTable extends WorkerInstances
     databaseName,
     databasePassword,
     databaseEngine,
+    environmentJson,
     enabled,
     sortOrder,
     createdAt,
@@ -16304,6 +16316,15 @@ class $WorkerInstancesTable extends WorkerInstances
         ),
       );
     }
+    if (data.containsKey('environment_json')) {
+      context.handle(
+        _environmentJsonMeta,
+        environmentJson.isAcceptableOrUnknown(
+          data['environment_json']!,
+          _environmentJsonMeta,
+        ),
+      );
+    }
     if (data.containsKey('enabled')) {
       context.handle(
         _enabledMeta,
@@ -16381,6 +16402,10 @@ class $WorkerInstancesTable extends WorkerInstances
         DriftSqlType.string,
         data['${effectivePrefix}database_engine'],
       ),
+      environmentJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}environment_json'],
+      ),
       enabled: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}enabled'],
@@ -16432,6 +16457,10 @@ class WorkerInstanceRow extends DataClass
 
   /// The managed database user this worker connects as. The four database
   /// columns stand or fall together -- without a user, the rest are cleared.
+  ///
+  /// Vestigial since schema 3: the v2-to-v3 migration converts these four
+  /// columns to [environmentJson] entries and nulls them. They stay in the
+  /// table so upgraded files keep opening; nothing reads or writes them.
   final String? databaseUser;
 
   /// The database that user connects to.
@@ -16442,6 +16471,12 @@ class WorkerInstanceRow extends DataClass
 
   /// Which engine. Only `postgres` is recognised; anything else stores null.
   final String? databaseEngine;
+
+  /// The worker's extra environment as a JSON object (`{KEY: value}`).
+  ///
+  /// Null and `{}` both mean none. Replaces the four `database*` columns,
+  /// which could only express one PostgreSQL credential set.
+  final String? environmentJson;
 
   /// Whether the worker should be running. On by default.
   final bool enabled;
@@ -16466,6 +16501,7 @@ class WorkerInstanceRow extends DataClass
     this.databaseName,
     this.databasePassword,
     this.databaseEngine,
+    this.environmentJson,
     required this.enabled,
     required this.sortOrder,
     required this.createdAt,
@@ -16492,6 +16528,9 @@ class WorkerInstanceRow extends DataClass
     }
     if (!nullToAbsent || databaseEngine != null) {
       map['database_engine'] = Variable<String>(databaseEngine);
+    }
+    if (!nullToAbsent || environmentJson != null) {
+      map['environment_json'] = Variable<String>(environmentJson);
     }
     map['enabled'] = Variable<bool>(enabled);
     map['sort_order'] = Variable<int>(sortOrder);
@@ -16521,6 +16560,9 @@ class WorkerInstanceRow extends DataClass
       databaseEngine: databaseEngine == null && nullToAbsent
           ? const Value.absent()
           : Value(databaseEngine),
+      environmentJson: environmentJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(environmentJson),
       enabled: Value(enabled),
       sortOrder: Value(sortOrder),
       createdAt: Value(createdAt),
@@ -16545,6 +16587,7 @@ class WorkerInstanceRow extends DataClass
       databaseName: serializer.fromJson<String?>(json['databaseName']),
       databasePassword: serializer.fromJson<String?>(json['databasePassword']),
       databaseEngine: serializer.fromJson<String?>(json['databaseEngine']),
+      environmentJson: serializer.fromJson<String?>(json['environmentJson']),
       enabled: serializer.fromJson<bool>(json['enabled']),
       sortOrder: serializer.fromJson<int>(json['sortOrder']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -16566,6 +16609,7 @@ class WorkerInstanceRow extends DataClass
       'databaseName': serializer.toJson<String?>(databaseName),
       'databasePassword': serializer.toJson<String?>(databasePassword),
       'databaseEngine': serializer.toJson<String?>(databaseEngine),
+      'environmentJson': serializer.toJson<String?>(environmentJson),
       'enabled': serializer.toJson<bool>(enabled),
       'sortOrder': serializer.toJson<int>(sortOrder),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -16585,6 +16629,7 @@ class WorkerInstanceRow extends DataClass
     Value<String?> databaseName = const Value.absent(),
     Value<String?> databasePassword = const Value.absent(),
     Value<String?> databaseEngine = const Value.absent(),
+    Value<String?> environmentJson = const Value.absent(),
     bool? enabled,
     int? sortOrder,
     DateTime? createdAt,
@@ -16605,6 +16650,9 @@ class WorkerInstanceRow extends DataClass
     databaseEngine: databaseEngine.present
         ? databaseEngine.value
         : this.databaseEngine,
+    environmentJson: environmentJson.present
+        ? environmentJson.value
+        : this.environmentJson,
     enabled: enabled ?? this.enabled,
     sortOrder: sortOrder ?? this.sortOrder,
     createdAt: createdAt ?? this.createdAt,
@@ -16633,6 +16681,9 @@ class WorkerInstanceRow extends DataClass
       databaseEngine: data.databaseEngine.present
           ? data.databaseEngine.value
           : this.databaseEngine,
+      environmentJson: data.environmentJson.present
+          ? data.environmentJson.value
+          : this.environmentJson,
       enabled: data.enabled.present ? data.enabled.value : this.enabled,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
@@ -16654,6 +16705,7 @@ class WorkerInstanceRow extends DataClass
           ..write('databaseName: $databaseName, ')
           ..write('databasePassword: $databasePassword, ')
           ..write('databaseEngine: $databaseEngine, ')
+          ..write('environmentJson: $environmentJson, ')
           ..write('enabled: $enabled, ')
           ..write('sortOrder: $sortOrder, ')
           ..write('createdAt: $createdAt, ')
@@ -16675,6 +16727,7 @@ class WorkerInstanceRow extends DataClass
     databaseName,
     databasePassword,
     databaseEngine,
+    environmentJson,
     enabled,
     sortOrder,
     createdAt,
@@ -16695,6 +16748,7 @@ class WorkerInstanceRow extends DataClass
           other.databaseName == this.databaseName &&
           other.databasePassword == this.databasePassword &&
           other.databaseEngine == this.databaseEngine &&
+          other.environmentJson == this.environmentJson &&
           other.enabled == this.enabled &&
           other.sortOrder == this.sortOrder &&
           other.createdAt == this.createdAt &&
@@ -16713,6 +16767,7 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
   final Value<String?> databaseName;
   final Value<String?> databasePassword;
   final Value<String?> databaseEngine;
+  final Value<String?> environmentJson;
   final Value<bool> enabled;
   final Value<int> sortOrder;
   final Value<DateTime> createdAt;
@@ -16730,6 +16785,7 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
     this.databaseName = const Value.absent(),
     this.databasePassword = const Value.absent(),
     this.databaseEngine = const Value.absent(),
+    this.environmentJson = const Value.absent(),
     this.enabled = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -16748,6 +16804,7 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
     this.databaseName = const Value.absent(),
     this.databasePassword = const Value.absent(),
     this.databaseEngine = const Value.absent(),
+    this.environmentJson = const Value.absent(),
     this.enabled = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -16769,6 +16826,7 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
     Expression<String>? databaseName,
     Expression<String>? databasePassword,
     Expression<String>? databaseEngine,
+    Expression<String>? environmentJson,
     Expression<bool>? enabled,
     Expression<int>? sortOrder,
     Expression<DateTime>? createdAt,
@@ -16787,6 +16845,7 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
       if (databaseName != null) 'database_name': databaseName,
       if (databasePassword != null) 'database_password': databasePassword,
       if (databaseEngine != null) 'database_engine': databaseEngine,
+      if (environmentJson != null) 'environment_json': environmentJson,
       if (enabled != null) 'enabled': enabled,
       if (sortOrder != null) 'sort_order': sortOrder,
       if (createdAt != null) 'created_at': createdAt,
@@ -16807,6 +16866,7 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
     Value<String?>? databaseName,
     Value<String?>? databasePassword,
     Value<String?>? databaseEngine,
+    Value<String?>? environmentJson,
     Value<bool>? enabled,
     Value<int>? sortOrder,
     Value<DateTime>? createdAt,
@@ -16825,6 +16885,7 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
       databaseName: databaseName ?? this.databaseName,
       databasePassword: databasePassword ?? this.databasePassword,
       databaseEngine: databaseEngine ?? this.databaseEngine,
+      environmentJson: environmentJson ?? this.environmentJson,
       enabled: enabled ?? this.enabled,
       sortOrder: sortOrder ?? this.sortOrder,
       createdAt: createdAt ?? this.createdAt,
@@ -16869,6 +16930,9 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
     if (databaseEngine.present) {
       map['database_engine'] = Variable<String>(databaseEngine.value);
     }
+    if (environmentJson.present) {
+      map['environment_json'] = Variable<String>(environmentJson.value);
+    }
     if (enabled.present) {
       map['enabled'] = Variable<bool>(enabled.value);
     }
@@ -16901,6 +16965,7 @@ class WorkerInstancesCompanion extends UpdateCompanion<WorkerInstanceRow> {
           ..write('databaseName: $databaseName, ')
           ..write('databasePassword: $databasePassword, ')
           ..write('databaseEngine: $databaseEngine, ')
+          ..write('environmentJson: $environmentJson, ')
           ..write('enabled: $enabled, ')
           ..write('sortOrder: $sortOrder, ')
           ..write('createdAt: $createdAt, ')
@@ -32585,6 +32650,7 @@ typedef $$WorkerInstancesTableCreateCompanionBuilder =
       Value<String?> databaseName,
       Value<String?> databasePassword,
       Value<String?> databaseEngine,
+      Value<String?> environmentJson,
       Value<bool> enabled,
       Value<int> sortOrder,
       Value<DateTime> createdAt,
@@ -32604,6 +32670,7 @@ typedef $$WorkerInstancesTableUpdateCompanionBuilder =
       Value<String?> databaseName,
       Value<String?> databasePassword,
       Value<String?> databaseEngine,
+      Value<String?> environmentJson,
       Value<bool> enabled,
       Value<int> sortOrder,
       Value<DateTime> createdAt,
@@ -32672,6 +32739,11 @@ class $$WorkerInstancesTableFilterComposer
 
   ColumnFilters<String> get databaseEngine => $composableBuilder(
     column: $table.databaseEngine,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get environmentJson => $composableBuilder(
+    column: $table.environmentJson,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -32760,6 +32832,11 @@ class $$WorkerInstancesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get environmentJson => $composableBuilder(
+    column: $table.environmentJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get enabled => $composableBuilder(
     column: $table.enabled,
     builder: (column) => ColumnOrderings(column),
@@ -32833,6 +32910,11 @@ class $$WorkerInstancesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get environmentJson => $composableBuilder(
+    column: $table.environmentJson,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get enabled =>
       $composableBuilder(column: $table.enabled, builder: (column) => column);
 
@@ -32894,6 +32976,7 @@ class $$WorkerInstancesTableTableManager
                 Value<String?> databaseName = const Value.absent(),
                 Value<String?> databasePassword = const Value.absent(),
                 Value<String?> databaseEngine = const Value.absent(),
+                Value<String?> environmentJson = const Value.absent(),
                 Value<bool> enabled = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -32911,6 +32994,7 @@ class $$WorkerInstancesTableTableManager
                 databaseName: databaseName,
                 databasePassword: databasePassword,
                 databaseEngine: databaseEngine,
+                environmentJson: environmentJson,
                 enabled: enabled,
                 sortOrder: sortOrder,
                 createdAt: createdAt,
@@ -32930,6 +33014,7 @@ class $$WorkerInstancesTableTableManager
                 Value<String?> databaseName = const Value.absent(),
                 Value<String?> databasePassword = const Value.absent(),
                 Value<String?> databaseEngine = const Value.absent(),
+                Value<String?> environmentJson = const Value.absent(),
                 Value<bool> enabled = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -32947,6 +33032,7 @@ class $$WorkerInstancesTableTableManager
                 databaseName: databaseName,
                 databasePassword: databasePassword,
                 databaseEngine: databaseEngine,
+                environmentJson: environmentJson,
                 enabled: enabled,
                 sortOrder: sortOrder,
                 createdAt: createdAt,

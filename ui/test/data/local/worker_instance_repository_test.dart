@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:ui/data/local/app_database.dart';
 import 'package:ui/data/local/worker_instance_repository.dart';
 import 'package:drift/native.dart';
@@ -34,9 +35,10 @@ void main() {
             cpuLimit: 0.05,
             memoryMb: 64,
             diskMb: 128,
-            databaseUser: ' app_rw ',
-            databaseName: ' app_db ',
-            databasePassword: ' secret ',
+            environment: {
+              'DATABASE_URL': 'postgresql://db/one',
+              'ANOTHER_KEY': 'another value',
+            },
           ),
           WorkerInstanceRecord(
             id: 'worker-mail',
@@ -61,9 +63,10 @@ void main() {
       expect(api.cpuLimit, 0.1);
       expect(api.memoryMb, 128);
       expect(api.diskMb, 256);
-      expect(api.databaseUser, 'app_rw');
-      expect(api.databaseName, 'app_db');
-      expect(api.databasePassword, 'secret');
+      expect(api.environment, {
+        'DATABASE_URL': 'postgresql://db/one',
+        'ANOTHER_KEY': 'another value',
+      });
       expect(api.sortOrder, 0);
 
       final mail = rows[1];
@@ -105,9 +108,6 @@ void main() {
             projectId: 'project-a',
             name: 'B',
             startCommand: 'npm run b',
-            databaseUser: '',
-            databaseName: 'db_should_clear',
-            databasePassword: 'pw_should_clear',
           ),
         ],
       );
@@ -115,9 +115,7 @@ void main() {
       final rows = await repository.listForProject('project-a');
       expect(rows, hasLength(1));
       expect(rows.single.id, 'worker-b');
-      expect(rows.single.databaseUser, isNull);
-      expect(rows.single.databaseName, isNull);
-      expect(rows.single.databasePassword, isNull);
+      expect(rows.single.environment, isEmpty);
     }, skip: !sqliteAvailable);
 
     test('clamps resource limits at both ends', () async {
@@ -251,41 +249,55 @@ void main() {
       expect(await repository.listForProject('project-a'), isEmpty);
     }, skip: !sqliteAvailable);
 
-    test('keeps postgres engines and drops unknown ones', () async {
+    test('round-trips environment entries untouched', () async {
       await repository.replaceForProject(
         projectId: 'project-a',
         rows: const [
           WorkerInstanceRecord(
-            id: 'pg-worker',
+            id: 'env-worker',
             projectId: 'project-a',
-            name: 'PG',
-            startCommand: 'run pg',
-            databaseUser: 'app_rw',
-            databaseEngine: ' Postgres ',
-          ),
-          WorkerInstanceRecord(
-            id: 'mysql-worker',
-            projectId: 'project-a',
-            name: 'My',
-            startCommand: 'run my',
-            databaseUser: 'app_rw',
-            databaseEngine: 'mysql',
-          ),
-          WorkerInstanceRecord(
-            id: 'userless-worker',
-            projectId: 'project-a',
-            name: 'No user',
-            startCommand: 'run nu',
-            databaseEngine: 'postgres',
+            name: 'Env',
+            startCommand: 'run env',
+            environment: {'PADDED': '  spaced  ', 'HASH': 'a#b=c'},
           ),
         ],
       );
 
       final rows = await repository.listForProject('project-a');
+      expect(rows.single.environment, {
+        'PADDED': '  spaced  ',
+        'HASH': 'a#b=c',
+      });
+    }, skip: !sqliteAvailable);
+
+    test('unreadable stored environment reads as none', () async {
+      await database
+          .into(database.workerInstances)
+          .insert(
+            WorkerInstancesCompanion.insert(
+              id: 'broken-worker',
+              projectId: 'project-a',
+              name: 'Broken',
+              startCommand: 'run broken',
+              environmentJson: const Value('{not json'),
+            ),
+          );
+      await database
+          .into(database.workerInstances)
+          .insert(
+            WorkerInstancesCompanion.insert(
+              id: 'shaped-worker',
+              projectId: 'project-a',
+              name: 'Shaped',
+              startCommand: 'run shaped',
+              environmentJson: const Value('["not", "an", "object"]'),
+            ),
+          );
+
+      final rows = await repository.listForProject('project-a');
       final byId = {for (final row in rows) row.id: row};
-      expect(byId['pg-worker']!.databaseEngine, 'postgres');
-      expect(byId['mysql-worker']!.databaseEngine, isNull);
-      expect(byId['userless-worker']!.databaseEngine, isNull);
+      expect(byId['broken-worker']!.environment, isEmpty);
+      expect(byId['shaped-worker']!.environment, isEmpty);
     }, skip: !sqliteAvailable);
 
     test('same worker id remains isolated across projects', () async {

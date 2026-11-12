@@ -60,17 +60,12 @@ def _worker_env_flags(
     worker_env_flags = []
     if runtime_env_docker_flags:
         worker_env_flags.append(runtime_env_docker_flags)
-    if worker.database_user is not None:
-        worker_env_flags.extend(
-            [
-                "-e DATABASE_ENGINE=postgres",
-                f"-e DATABASE_HOST={shlex.quote(worker.database_host)}",
-                f"-e DATABASE_PORT={shlex.quote(str(worker.database_port))}",
-                f"-e DATABASE_NAME={shlex.quote(worker.database_name)}",
-                f"-e DATABASE_USER={shlex.quote(worker.database_user)}",
-                f"-e DATABASE_PASSWORD={shlex.quote(worker.database_password)}",
-            ]
-        )
+    custom_flags = build_runtime_env_docker_flags(
+        worker.environment,
+        include_values=True,
+    )
+    if custom_flags:
+        worker_env_flags.append(custom_flags)
     return " ".join(worker_env_flags)
 
 

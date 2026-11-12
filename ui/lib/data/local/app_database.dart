@@ -36,7 +36,55 @@ part 'app_database.g.dart';
 /// whether provisioning finished, so an early-saved server (persisted before
 /// setup runs) is distinguishable from a fully onboarded one. Every
 /// pre-existing row backfills to complete, which is what all of them are.
-const int appDatabaseSchemaVersion = 2;
+///
+/// Version 3 replaces the worker `database*` columns with one
+/// `environment_json` object; the migration converts complete credentials
+/// to `DATABASE_*` entries and nulls the legacy columns either way.
+const int appDatabaseSchemaVersion = 3;
+
+/// Converts v2 worker database columns to v3 environment entries.
+///
+/// A complete credential (user, name and password all present) becomes the
+/// same six `DATABASE_*` variables the old payload builder sent, with the
+/// same host/port/engine defaults. Anything partial never produced
+/// variables, so it converts to nothing. Legacy columns are nulled in both
+/// cases: stale passwords must not linger in columns nothing reads.
+Future<void> _migrateWorkerDatabaseColumns(Migrator migrator) async {
+  final database = migrator.database;
+  final rows = await database
+      .customSelect(
+        'SELECT project_id, id, database_user, database_name, '
+        'database_password FROM worker_instances '
+        'WHERE database_user IS NOT NULL',
+      )
+      .get();
+  for (final row in rows) {
+    final data = row.data;
+    final user = (data['database_user'] as String?)?.trim() ?? '';
+    final name = (data['database_name'] as String?)?.trim() ?? '';
+    final password = (data['database_password'] as String?)?.trim() ?? '';
+    final String? environmentJson;
+    if (user.isEmpty || name.isEmpty || password.isEmpty) {
+      environmentJson = null;
+    } else {
+      environmentJson = jsonEncode(<String, String>{
+        'DATABASE_ENGINE': 'postgres',
+        'DATABASE_HOST': 'host.docker.internal',
+        'DATABASE_PORT': '5432',
+        'DATABASE_NAME': name,
+        'DATABASE_USER': user,
+        'DATABASE_PASSWORD': password,
+      });
+    }
+    await database.customStatement(
+      'UPDATE worker_instances SET environment_json = ?, '
+      'database_user = NULL, database_name = NULL, '
+      'database_password = NULL, database_engine = NULL '
+      'WHERE project_id = ? AND id = ?',
+      [environmentJson, data['project_id'], data['id']],
+    );
+  }
+}
 
 /// The format version stamped into a SQLite backup snapshot's
 /// `deploydash_backup_metadata` table (see `createConsistentEncryptedSnapshot`
@@ -1150,6 +1198,10 @@ class WorkerInstances extends Table {
 
   /// The managed database user this worker connects as. The four database
   /// columns stand or fall together -- without a user, the rest are cleared.
+  ///
+  /// Vestigial since schema 3: the v2-to-v3 migration converts these four
+  /// columns to [environmentJson] entries and nulls them. They stay in the
+  /// table so upgraded files keep opening; nothing reads or writes them.
   TextColumn get databaseUser => text().nullable()();
 
   /// The database that user connects to.
@@ -1160,6 +1212,12 @@ class WorkerInstances extends Table {
 
   /// Which engine. Only `postgres` is recognised; anything else stores null.
   TextColumn get databaseEngine => text().nullable()();
+
+  /// The worker's extra environment as a JSON object (`{KEY: value}`).
+  ///
+  /// Null and `{}` both mean none. Replaces the four `database*` columns,
+  /// which could only express one PostgreSQL credential set.
+  TextColumn get environmentJson => text().nullable()();
 
   /// Whether the worker should be running. On by default.
   BoolColumn get enabled => boolean().withDefault(const Constant(true))();
@@ -1760,6 +1818,13 @@ class AppDatabase extends _$AppDatabase {
     onUpgrade: (migrator, from, to) async {
       if (from < 2) {
         await migrator.addColumn(servers, servers.setupComplete);
+      }
+      if (from < 3) {
+        await migrator.addColumn(
+          workerInstances,
+          workerInstances.environmentJson,
+        );
+        await _migrateWorkerDatabaseColumns(migrator);
       }
     },
     onCreate: (migrator) async {
