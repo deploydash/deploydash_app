@@ -545,8 +545,12 @@ grep -q "DEPLOYDASH_APPLE_APP_PASSWORD" \
   "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
 grep -q "DEPLOYDASH_ORCHESTRATOR_VERSION_FILE" "${GIT_ROOT}/.github/workflows/backend-engine.yml"
 test -f "${GIT_ROOT}/.github/actions/setup-flutter/action.yml"
-grep -Eq '^[[:space:]]+default: "3.47.8"' "${GIT_ROOT}/.github/actions/setup-flutter/action.yml"
-grep -Eq '^[[:space:]]+default: "737ba8f885dc774b53b442759999a312c9461e4e"' "${GIT_ROOT}/.github/actions/setup-flutter/action.yml"
+# Pin assertions are scoped to their owning input block: a bare grep would
+# also pass if the two pins were swapped or duplicated elsewhere.
+awk '/^  [a-zA-Z0-9_-]+:/ { in_block = ($0 ~ /^  flutter-version:/) } in_block && /^[[:space:]]+default: "3.50.0"/ { found = 1 } END { exit !found }' \
+  "${GIT_ROOT}/.github/actions/setup-flutter/action.yml"
+awk '/^  [a-zA-Z0-9_-]+:/ { in_block = ($0 ~ /^  flutter-revision:/) } in_block && /^[[:space:]]+default: "ab2912035e160d9cad6306df307576da6128ebdb"/ { found = 1 } END { exit !found }' \
+  "${GIT_ROOT}/.github/actions/setup-flutter/action.yml"
 grep -q './.github/actions/setup-flutter' "${GIT_ROOT}/.github/workflows/ci.yml"
 test -f "${GIT_ROOT}/.github/actions/ci-dart-defines/action.yml"
 grep -q './.github/actions/ci-dart-defines' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"

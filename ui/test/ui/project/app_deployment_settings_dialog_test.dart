@@ -1,7 +1,7 @@
 import 'package:ui/providers/github_integration_provider.dart';
 import 'package:ui/ui/project/project_workspace.dart';
 import 'package:ui/ui/system/app_forms.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _DialogHost extends StatefulWidget {

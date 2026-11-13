@@ -2,7 +2,7 @@ import 'package:ui/data/local/server_repository.dart';
 import 'package:ui/providers/recent_projects_provider.dart';
 import 'package:ui/providers/server_list_provider.dart';
 import 'package:ui/services/local_search_index.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/ui/layout/app_navigation_rail.dart';

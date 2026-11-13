@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:ui/services/local_search_index.dart';
 import 'package:ui/ui/system/app_search.dart';
 import 'package:ui/ui/system/app_theme.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
