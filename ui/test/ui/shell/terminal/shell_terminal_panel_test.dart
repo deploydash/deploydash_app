@@ -8,7 +8,7 @@ import 'package:ui/providers/terminal_view_preferences_provider.dart';
 import 'package:ui/services/concurrency_engine.dart';
 import 'package:ui/ui/shell/terminal/shell_terminal_panel.dart';
 import 'package:drift/native.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 

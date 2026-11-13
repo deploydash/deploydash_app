@@ -6,7 +6,7 @@
 library;
 
 import 'dart:async';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import '../../providers/pending_enrollment_provider.dart';
 import '../../providers/project_provider.dart';
 import '../../providers/server_provider.dart';

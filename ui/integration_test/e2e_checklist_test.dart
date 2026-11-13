@@ -16,7 +16,7 @@ import 'package:ui/ui/project/project_workspace.dart';
 import 'package:ui/ui/settings/app_settings_view.dart';
 import 'package:ui/ui/startup/database_unlock_gate.dart';
 import 'package:ui/ui/system/app_dialogs.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

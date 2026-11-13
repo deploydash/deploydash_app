@@ -8,7 +8,7 @@ import 'package:ui/services/local_search_index.dart';
 import 'package:ui/ui/layout/app_navigation_rail.dart';
 import 'package:ui/ui/navigation/desktop_route.dart';
 import 'package:ui/ui/shell/shell_navigation_rail.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

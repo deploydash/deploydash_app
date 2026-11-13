@@ -13,7 +13,7 @@ import 'package:ui/services/ssh_service.dart';
 import 'package:ui/ui/settings/app_settings_view.dart';
 import 'package:drift/native.dart';
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
