@@ -34,6 +34,7 @@ from ..app_parts.repository_host_key import (
 )
 from ..app_parts.worker_runtime import (
     build_runtime_env_docker_flags,
+    build_worker_cleanup_command,
     build_worker_runtime_command_specs,
     render_runtime_env_stdin,
 )

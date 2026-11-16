@@ -95,14 +95,20 @@ def _prepare_runtime_operation(
         }
 
     session = None
+    # Dry-run and pre-session default: a fresh install with no live
+    # release, matching the no-live-release arm of
+    # `_release_runtime_targets`.
     release_targets = {
         "manifest": empty_release_manifest(),
         "live_release": None,
         "live_release_id": None,
         "web_container_name": app_config.container_name,
         "image_name": app_config.image_name,
-        "worker_container_names": _legacy_worker_container_names(app_config),
-        "legacy": True,
+        "worker_container_names": [
+            _worker_container_name(app_config.project_slug, worker.id)
+            for worker in app_config.workers
+        ],
+        "has_previous_live_route": False,
     }
     if not dry_run:
         opened = ctx.open_runtime_session(
@@ -198,10 +204,6 @@ def _prepare_runtime_operation(
     effective_image_name = release_targets["image_name"]
     live_release_id = release_targets["live_release_id"]
     quoted_container_name = shlex.quote(effective_container_name)
-    worker_legacy_container_name = server_identifiers.legacy_worker_container(
-        app_config.project_slug
-    )
-    quoted_worker_legacy_container_name = shlex.quote(worker_legacy_container_name)
     quoted_image_name = shlex.quote(effective_image_name)
     quoted_project_root = shlex.quote(app_config.project_root)
     quoted_caddy_snippet_path = shlex.quote(app_config.caddy_snippet_path)
@@ -234,24 +236,16 @@ def _prepare_runtime_operation(
         )
     sqlite_snapshot_docker_flags = " ".join(sqlite_snapshot_volume_flags)
     project_label = f"{server_identifiers.LABEL_PROJECT}={app_config.project_slug}"
-    release_label = f"{server_identifiers.LABEL_RELEASE_ID}={live_release_id}"
     worker_role_filter = (
         f"--filter label={server_identifiers.LABEL_ROLE}={server_identifiers.ROLE_WORKER} "
     )
     quoted_worker_project_label = shlex.quote(project_label)
-    quoted_worker_release_filter = (
-        f"--filter label={shlex.quote(release_label)} "
-        if not release_targets["legacy"]
-        and isinstance(live_release_id, str)
-        and live_release_id.strip()
-        else ""
-    )
-    worker_cleanup_command = (
-        "docker ps -a "
-        f"--filter label={quoted_worker_project_label} "
-        f"{quoted_worker_release_filter}"
-        f"{worker_role_filter}"
-        "--format '{{.Names}}' | xargs -r docker rm -f >/dev/null 2>&1 || true"
+    # Removal enumerates actual container names by worker identity: a name
+    # derived from the current live release misses containers started under
+    # an earlier one, which is how a redeploy used to leave the old worker
+    # running beside the new one.
+    worker_cleanup_command = build_worker_cleanup_command(
+        project_slug=app_config.project_slug,
     )
     worker_network_command = (
         'WORKER_NETWORK="$(docker inspect -f '
@@ -316,20 +310,26 @@ def _prepare_runtime_operation(
         and operation_id in ("worker_start", "worker_restart", "worker_logs")
         else None
     )
-    target_worker_stop_command = None
-    if target_worker is not None and operation_id == "worker_stop":
-        target_spec = worker_runtime_specs_by_id.get(target_worker.id)
-        if target_spec is not None:
-            target_worker_stop_command = target_spec.stop_command
+    target_worker_cleanup_command = None
+    if target_worker is not None and operation_id in (
+        "worker_start",
+        "worker_restart",
+        "worker_stop",
+    ):
+        target_worker_cleanup_command = build_worker_cleanup_command(
+            project_slug=app_config.project_slug,
+            worker_id=target_worker.id,
+        )
+    # Status lists every worker container of the project, not just those of
+    # the live release, so a stray container from another release or a
+    # renamed/deleted worker surfaces in the snapshot instead of hiding.
     worker_status_command = (
         "docker ps -a "
         f"--filter label={quoted_worker_project_label} "
-        f"{quoted_worker_release_filter}"
         f"{worker_role_filter}"
         "--format 'META|{{.Names}}|{{.State}}|{{.Status}}|{{.ID}}'; "
         'RUNNING_NAMES="$(docker ps '
         f"--filter label={quoted_worker_project_label} "
-        f"{quoted_worker_release_filter}"
         f"{worker_role_filter}"
         "--format '{{.Names}}')\"; "
         'if [ -n "${RUNNING_NAMES}" ]; then '
@@ -455,7 +455,6 @@ def _prepare_runtime_operation(
         quoted_worker_project_label=quoted_worker_project_label,
         quoted_container_name=quoted_container_name,
         worker_cleanup_command=worker_cleanup_command,
-        quoted_worker_legacy_container_name=quoted_worker_legacy_container_name,
         quoted_project_root=quoted_project_root,
         quoted_release_manifest_path=shlex.quote(app_config.release_manifest_path),
         quoted_caddy_snippet_path=quoted_caddy_snippet_path,
@@ -479,7 +478,7 @@ def _prepare_runtime_operation(
         worker_precheck_command=worker_precheck_command,
         normalized_worker_id=normalized_worker_id,
         target_worker_commands=target_worker_commands,
-        target_worker_stop_command=target_worker_stop_command,
+        target_worker_cleanup_command=target_worker_cleanup_command,
     )
     operation_steps = build_runtime_operation_steps(operation_id, resources)
 
@@ -514,6 +513,7 @@ def _prepare_runtime_operation(
         normalized_worker_id=normalized_worker_id,
         normalized_log_tail_lines=normalized_log_tail_lines,
         targeted_worker_operation_ids=targeted_worker_operation_ids,
+        live_release_id=live_release_id,
     )
 
 
@@ -865,6 +865,7 @@ def _execute_runtime_plan(ctx: SupportsAppRuntimeOperations, request):
                 app_config,
                 worker_runtime_rows,
             )
+            response["live_release_id"] = request.live_release_id
         if operation_id in targeted_worker_operation_ids and normalized_worker_id is not None:
             response["worker_id"] = normalized_worker_id
         if operation_id == "workers_precheck":

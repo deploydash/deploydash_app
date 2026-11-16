@@ -145,7 +145,7 @@ void main() {
         isNull,
       );
       expect(database.schemaVersion, appDatabaseSchemaVersion);
-      expect(appDatabaseSchemaVersion, 3);
+      expect(appDatabaseSchemaVersion, 4);
     },
     skip: !sqliteAvailable,
   );
@@ -272,6 +272,70 @@ void main() {
     },
     skip: !sqliteAvailable,
   );
+
+  test(
+    'worker container names merge into one release row, never replace',
+    () async {
+      final database = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+      final repository = AppReleaseRepository(database);
+
+      await repository.upsertWorkerContainerNames(
+        projectId: 'project-1',
+        serverId: 'server-1',
+        releaseId: 'release-one',
+        containerNames: const ['deploydash_worker_demo_queue-worker_r1'],
+      );
+      await repository.upsertWorkerContainerNames(
+        projectId: 'project-1',
+        serverId: 'server-1',
+        releaseId: 'release-one',
+        containerNames: const [
+          'deploydash_worker_demo_scheduler_r1',
+          'deploydash_worker_demo_queue-worker_r1',
+        ],
+      );
+
+      final releases = await repository.listReleasesForScope(
+        projectId: 'project-1',
+        serverId: 'server-1',
+      );
+      expect(releases, hasLength(1));
+      expect(releases.single.status, 'live');
+      expect(jsonDecode(releases.single.workerContainerNamesJson!), [
+        'deploydash_worker_demo_queue-worker_r1',
+        'deploydash_worker_demo_scheduler_r1',
+      ]);
+    },
+    skip: !sqliteAvailable,
+  );
+
+  test('worker container names writer drops blank scopes', () async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = AppReleaseRepository(database);
+
+    await repository.upsertWorkerContainerNames(
+      projectId: '   ',
+      serverId: 'server-1',
+      releaseId: 'release-one',
+      containerNames: const ['deploydash_worker_demo_queue-worker_r1'],
+    );
+    await repository.upsertWorkerContainerNames(
+      projectId: 'project-1',
+      serverId: 'server-1',
+      releaseId: 'release-one',
+      containerNames: const ['  '],
+    );
+
+    expect(
+      await repository.listReleasesForScope(
+        projectId: 'project-1',
+        serverId: 'server-1',
+      ),
+      isEmpty,
+    );
+  }, skip: !sqliteAvailable);
 
   test('worker writer drops empty payloads', () async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());

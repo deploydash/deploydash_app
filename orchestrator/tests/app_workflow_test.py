@@ -2,6 +2,7 @@ import json
 import unittest
 from unittest.mock import patch
 
+import engine
 from engine import _read_remote_file_text, handle_request
 from orchestrator.app_parts.repository_host_key import (
     CONFIRMATION_CODE,
@@ -1899,6 +1900,94 @@ class TestAppWorkflow(unittest.TestCase):
         self.assertNotIn("--security-opt no-new-privileges", run_commands[0])
         self.assertNotIn("--cap-drop ALL", run_commands[0])
         self.assertIn("--pids-limit 512", run_commands[0])
+
+    @patch("engine.create_runtime_session")
+    def test_app_worker_restart_removes_container_from_previous_release(
+        self, mock_create_runtime_session
+    ):
+        mock_create_runtime_session.return_value = _FakeSession()
+        live_manifest = json.dumps(
+            {
+                "schema_version": 1,
+                "releases": [
+                    {
+                        "release_id": "20260101t000000z-aaaa11111111",
+                        "status": "live",
+                        "web_container_name": "deploydash_app_remix-blog_20260101t000000z-aaaa11111111",
+                        "image_name": "deploydash_remix-blog:release-20260101t000000z-aaaa11111111",
+                        "worker_container_names": [
+                            "deploydash_worker_remix-blog_queue-worker_20250101t000000z-000000000000"
+                        ],
+                    }
+                ],
+            }
+        )
+        with patch.object(
+            engine,
+            "_read_remote_file_text",
+            return_value=live_manifest,
+        ):
+            result = json.loads(
+                handle_request(
+                    json.dumps(
+                        {
+                            "action": "run_workflow",
+                            "workflow_id": "app",
+                            "operation_id": "worker_restart",
+                            "connection": {
+                                "ip": "203.0.113.10",
+                                "port": 22,
+                                "username": "root",
+                                "password": "secret",
+                            },
+                            "params": {
+                                "dry_run": False,
+                                "worker_id": "queue-worker",
+                                "settings": {
+                                    "project_slug": "remix-blog",
+                                    "repository_full_name": "acme/remix-blog",
+                                    "primary_domain": None,
+                                    "workers": [
+                                        {
+                                            "id": "queue-worker",
+                                            "name": "Queue worker",
+                                            "start_cmd": "npm run worker:queue",
+                                            "cpu_limit": 1.5,
+                                            "memory_mb": 512,
+                                            "disk_mb": 2048,
+                                        }
+                                    ],
+                                },
+                            },
+                        }
+                    )
+                )
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["live_release_id"], "20260101t000000z-aaaa11111111")
+        commands = mock_create_runtime_session.return_value.host.commands
+        # The running container belongs to an earlier release, so its name
+        # is not derivable from the live release. Removal must enumerate
+        # actual names by the worker's prefix, before the new start.
+        removal_commands = [
+            command
+            for command in commands
+            if "docker ps -a --format '{{.Names}}'" in command
+            and "deploydash_worker_remix-blog_queue-worker_" in command
+        ]
+        self.assertEqual(len(removal_commands), 1)
+        run_commands = [
+            command
+            for command in commands
+            if "docker run -d " in command
+            and "deploydash_worker_remix-blog_queue-worker_20260101t000000z-aaaa11111111" in command
+        ]
+        self.assertEqual(len(run_commands), 1)
+        self.assertLess(
+            commands.index(removal_commands[0]),
+            commands.index(run_commands[0]),
+        )
 
     @patch("engine.create_runtime_session")
     def test_app_worker_stop_operation_succeeds(self, mock_create_runtime_session):

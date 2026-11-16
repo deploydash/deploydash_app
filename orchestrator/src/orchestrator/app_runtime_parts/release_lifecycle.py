@@ -137,41 +137,23 @@ def _release_runtime_targets(ctx: SupportsAppReleaseLifecycle, host, app_config)
                 for item in live_release.get("worker_container_names", [])
                 if isinstance(item, str) and item.strip()
             ],
-            "legacy": False,
             "has_previous_live_route": True,
         }
-    legacy_container_name = app_config.container_name
-    legacy_container_running = _legacy_container_is_running(
-        host,
-        legacy_container_name,
-    )
+    # No live release: a fresh install. There is no previous route to
+    # preserve or revert to, and the plain container names are the only
+    # ones in play until the first versioned deploy.
     return {
         "manifest": manifest,
         "live_release": None,
         "live_release_id": None,
-        "web_container_name": legacy_container_name,
+        "web_container_name": app_config.container_name,
         "image_name": app_config.image_name,
         "worker_container_names": [
             _worker_container_name(app_config.project_slug, worker.id)
             for worker in app_config.workers
         ],
-        "legacy": True,
-        "has_previous_live_route": legacy_container_running,
+        "has_previous_live_route": False,
     }
-
-
-def _legacy_container_is_running(host, container_name):
-    quoted_container_name = shlex.quote(container_name)
-    try:
-        status, _ = host.run_shell_command(
-            "docker inspect -f '{{.State.Running}}' "
-            f"{quoted_container_name} 2>/dev/null | grep -qx true",
-            _timeout=10,
-            _sudo=True,
-        )
-    except Exception:
-        return False
-    return bool(status)
 
 
 def _resolve_commit_sha(ctx: SupportsAppReleaseLifecycle, session, app_config, *, emit=None):
@@ -494,8 +476,8 @@ def _build_release_run_command(app_config, *, release_id, image_name, live_label
     }
 
 
-def _release_route_target(app_config, *, release_id=None, container_name=None, legacy=False):
-    if not legacy and isinstance(release_id, str) and release_id.strip():
+def _release_route_target(app_config, *, release_id=None, container_name=None):
+    if isinstance(release_id, str) and release_id.strip():
         return app_config.release_upstream_name(release_id)
     if isinstance(container_name, str) and container_name.strip():
         return container_name
@@ -612,11 +594,6 @@ def _release_worker_container_names(app_config, release_id):
         app_config.release_worker_container_name(release_id, worker.id)
         for worker in app_config.workers
     ]
-
-
-def _legacy_worker_container_names(app_config):
-    # Same per-worker name, not the pre-worker-id shape; a twin function until T-3.4.2.
-    return [_worker_container_name(app_config.project_slug, w.id) for w in app_config.workers]
 
 
 def _write_caddy_route(
@@ -820,11 +797,35 @@ def _stop_release_runtime(
     web_container_name,
     worker_container_names,
     emit=None,
+    project_slug=None,
+    exclude_release_id=None,
 ):
     commands = [f"docker rm -f {shlex.quote(web_container_name)} >/dev/null 2>&1 || true"]
     for worker_container_name in worker_container_names:
         commands.append(
             f"docker rm -f {shlex.quote(worker_container_name)} >/dev/null 2>&1 || true"
+        )
+    if (
+        isinstance(project_slug, str)
+        and project_slug.strip()
+        and isinstance(exclude_release_id, str)
+        and exclude_release_id.strip()
+    ):
+        # Belt and braces beside the recorded names: a worker started from
+        # the Workers tab after this release was deployed is not in the
+        # manifest list, so enumerate actual names and remove any worker
+        # container not belonging to the incoming release, whose suffix
+        # marks it as safe to keep.
+        prefix = server_identifiers.worker_container_prefix(project_slug)
+        commands.append(
+            "WORKER_CONTAINER_NAMES=\"$(docker ps -a --format '{{.Names}}')\" && "
+            "for WORKER_CONTAINER in ${WORKER_CONTAINER_NAMES}; do "
+            f'case "${{WORKER_CONTAINER}}" in {shlex.quote(prefix)}*) '
+            f'case "${{WORKER_CONTAINER}}" in *_{shlex.quote(exclude_release_id.strip())}) '
+            ";; "
+            '*) docker rm -f "${WORKER_CONTAINER}" >/dev/null 2>&1 || true ;; '
+            "esac ;; "
+            "esac; done"
         )
     return _run_remote_command(
         ctx,
@@ -1102,7 +1103,6 @@ def _execute_versioned_release_deploy(
         app_config,
         release_id=previous_live_release_id,
         container_name=previous_web_container_name,
-        legacy=previous_targets["legacy"],
     )
 
     candidate_release_entry = release_entry_from_config(
@@ -1668,6 +1668,8 @@ def _execute_versioned_release_deploy(
             web_container_name=previous_web_container_name,
             worker_container_names=previous_worker_container_names,
             emit=emit,
+            project_slug=app_config.project_slug,
+            exclude_release_id=release_id,
         )
     prune_result = _prune_release_artifacts(
         ctx,
@@ -1724,7 +1726,6 @@ def _execute_release_rollback(
         app_config,
         release_id=current_live_release_id,
         container_name=release_targets["web_container_name"],
-        legacy=release_targets["legacy"],
     )
     target_release = (
         find_release_entry(manifest, requested_release_id)
@@ -2205,6 +2206,8 @@ def _execute_release_rollback(
         web_container_name=release_targets["web_container_name"],
         worker_container_names=release_targets["worker_container_names"],
         emit=emit,
+        project_slug=app_config.project_slug,
+        exclude_release_id=rollback_release_id,
     )
     prune_result = _prune_release_artifacts(
         ctx,

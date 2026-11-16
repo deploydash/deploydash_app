@@ -100,7 +100,10 @@ class TestSchedulerHelpers(unittest.TestCase):
         self.assertIn("label=deploydash.live=true", text)
         self.assertIn("/opt/deploydash/stack/apps/.deploydash/apps/test-app/releases.json", text)
         self.assertIn("web_container_name", text)
-        self.assertIn("LEGACY_CONTAINER=deploydash_app_test-app", text)
+        # There is no pre-manifest fallback: without a live release the
+        # script fails rather than guessing the plain container name.
+        self.assertNotIn("LEGACY_CONTAINER", text)
+        self.assertNotIn("deploydash_app_test-app", text)
         self.assertIn(
             "Deploy Dash could not find the live web app container",
             text,

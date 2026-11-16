@@ -135,6 +135,102 @@ void main() {
     });
 
     testWidgets(
+      'Workers tab records created worker containers against the live release',
+      (WidgetTester tester) async {
+        final database = AppDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(() async {
+          await database.close();
+        });
+        await WorkerInstanceRepository(database).replaceForProject(
+          projectId: selectedProject.id,
+          rows: [
+            WorkerInstanceRecord(
+              id: 'queue-worker',
+              projectId: selectedProject.id,
+              name: 'Queue worker',
+              startCommand: 'npm run worker:queue',
+              cpuLimit: 2.0,
+              memoryMb: 1024,
+              diskMb: 4096,
+              enabled: true,
+              sortOrder: 0,
+            ),
+          ],
+        );
+        final sshService = WorkersWorkflowSshService(
+          projectListResponse: const <String, dynamic>{
+            'status': 'success',
+            'users': <dynamic>[],
+          },
+          statusResponse: const <String, dynamic>{
+            'status': 'success',
+            'workers': {
+              'configured': [
+                {
+                  'id': 'queue-worker',
+                  'runtime': {'state': 'not_created', 'status': 'Not created'},
+                },
+              ],
+              'orphans': <dynamic>[],
+            },
+          },
+          applyResponse: const <String, dynamic>{
+            'status': 'success',
+            'msg': 'Workers applied.',
+            'live_release_id': '20260101t000000z-aaaa11111111',
+            'workers': {
+              'configured': [
+                {
+                  'id': 'queue-worker',
+                  'container_name':
+                      'deploydash_worker_demo_queue-worker_20260101t000000z-aaaa11111111',
+                  'runtime': {'state': 'running', 'status': 'Up 5s'},
+                },
+              ],
+              'orphans': <dynamic>[],
+            },
+          },
+        );
+
+        await pumpProjectWorkspace(
+          tester,
+          database: database,
+          overrides: [
+            selectedProjectProvider.overrideWithValue(
+              selectedProjectWithLiveRuntime,
+            ),
+            selectedServerProvider.overrideWithValue(
+              serverWithRuntimeCredentials,
+            ),
+            sshServiceProvider.overrideWithValue(sshService),
+          ],
+        );
+
+        await tester.tap(find.widgetWithText(Tab, 'Workers'));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key('workers-apply-runtime-button')));
+        await tester.pumpAndSettle();
+
+        expect(sshService.applyCalls, 1);
+        final releases = await AppReleaseRepository(database)
+            .listReleasesForScope(
+              projectId: selectedProject.id,
+              serverId: serverWithRuntimeCredentials.id,
+            );
+        expect(releases, hasLength(1));
+        expect(releases.single.releaseId, '20260101t000000z-aaaa11111111');
+        expect(releases.single.status, 'live');
+        expect(
+          releases.single.workerContainerNamesJson,
+          contains(
+            'deploydash_worker_demo_queue-worker_20260101t000000z-aaaa11111111',
+          ),
+        );
+      },
+    );
+
+    testWidgets(
       'Workers tab applies runtime with injected postgres DATABASE_URL',
       (WidgetTester tester) async {
         final project = selectedProjectWithLiveRuntime.copyWith(

@@ -73,6 +73,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
             web_container_name,
             worker_container_names,
             emit=None,
+            **_kwargs,
         ):
             stopped.append((web_container_name, list(worker_container_names)))
             return {"ok": True}
@@ -98,7 +99,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(
@@ -263,7 +264,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(
@@ -327,7 +328,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(
@@ -409,7 +410,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(
@@ -540,7 +541,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(
@@ -650,7 +651,6 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": None,
                     "image_name": None,
                     "worker_container_names": [],
-                    "legacy": False,
                     "has_previous_live_route": False,
                 },
             ),
@@ -797,7 +797,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                         "web_container_name": None,
                         "image_name": None,
                         "worker_container_names": [],
-                        "legacy": False,
+                        "has_previous_live_route": False,
                     },
                 ),
                 patch.object(engine_app_ops, "_write_release_manifest"),
@@ -920,7 +920,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(
@@ -1004,7 +1004,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(
@@ -1113,7 +1113,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(
@@ -1176,7 +1176,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": previous_live["web_container_name"],
                     "image_name": previous_live["image_name"],
                     "worker_container_names": previous_live["worker_container_names"],
-                    "legacy": False,
+                    "has_previous_live_route": True,
                 },
             ),
             patch.object(engine_app_ops, "_write_release_manifest"),
@@ -1276,7 +1276,7 @@ class TestVersionedReleaseDeploy(AppReleaseFlowTestCase):
                     "web_container_name": None,
                     "image_name": None,
                     "worker_container_names": [],
-                    "legacy": False,
+                    "has_previous_live_route": False,
                 },
             ),
             patch.object(engine_app_ops, "_write_release_manifest"),

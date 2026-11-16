@@ -1261,6 +1261,14 @@ class _ThrowingJournalReleaseRepository implements AppReleaseRepository {
   Future<void> upsertRelease(AppReleaseRecord record) async {}
 
   @override
+  Future<void> upsertWorkerContainerNames({
+    required String projectId,
+    required String serverId,
+    required String releaseId,
+    required List<String> containerNames,
+  }) async {}
+
+  @override
   Future<AppRuntimeSnapshotRecord?> readRuntimeSnapshot({
     required String projectId,
     required String serverId,

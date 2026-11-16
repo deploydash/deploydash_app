@@ -53,6 +53,37 @@ def _label_flag(key: str, value: str) -> str:
     return f"--label {server_identifiers.label_pair(key, value)}"
 
 
+def build_worker_cleanup_command(
+    *,
+    project_slug: str,
+    worker_id: str | None = None,
+) -> str:
+    """Remove every container belonging to one worker (or the whole project).
+
+    A worker's container name embeds the release that created it, so any
+    command derived from the *current* live release misses containers
+    started under an earlier one. Removal therefore enumerates the actual
+    container names and matches the worker's anchored name prefix, which is
+    stable across releases. The match is anchored on the prefix plus a
+    trailing separator: worker ids are kebab-case and never carry the
+    separator, so `queue` cannot match `queue-worker`'s containers.
+    """
+    prefix = server_identifiers.worker_container_prefix(project_slug)
+    expected_worker_id = worker_id if isinstance(worker_id, str) and worker_id.strip() else None
+    if expected_worker_id is not None:
+        prefix = f"{prefix}{expected_worker_id}_"
+    quoted_prefix = shlex.quote(prefix)
+    # The assignment gates the loop: a failed `docker ps` must fail the step
+    # loudly rather than silently starting a duplicate container.
+    return (
+        "WORKER_CONTAINER_NAMES=\"$(docker ps -a --format '{{.Names}}')\" && "
+        "for WORKER_CONTAINER in ${WORKER_CONTAINER_NAMES}; do "
+        f'case "${{WORKER_CONTAINER}}" in {quoted_prefix}*) '
+        'docker rm -f "${WORKER_CONTAINER}" >/dev/null 2>&1 || true ;; '
+        "esac; done"
+    )
+
+
 def _worker_env_flags(
     worker: WorkerConfig,
     runtime_env_docker_flags: str,

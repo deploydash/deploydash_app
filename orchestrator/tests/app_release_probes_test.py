@@ -95,6 +95,14 @@ class TestReleaseProbes(AppReleaseFlowTestCase):
                 web_container_name="web-old",
                 worker_container_names=["worker-old"],
             )
+            engine_app_ops._stop_release_runtime(
+                self.ctx,
+                self.session,
+                web_container_name="web-old",
+                worker_container_names=["worker-old"],
+                project_slug="remix-blog",
+                exclude_release_id="20260531t130000z-fedcba987654",
+            )
 
         self.assertEqual(
             commands[0],
@@ -114,6 +122,14 @@ class TestReleaseProbes(AppReleaseFlowTestCase):
                 "docker rm -f worker-old >/dev/null 2>&1 || true",
             ),
         )
+        # With the incoming release known, removal also sweeps enumerated
+        # worker containers not belonging to it -- anything the manifest's
+        # recorded names miss, like a worker started from the Workers tab.
+        self.assertEqual(commands[2][0], "Stop previous release runtime")
+        sweep_command = commands[2][1]
+        self.assertIn("docker ps -a --format '{{.Names}}'", sweep_command)
+        self.assertIn("deploydash_worker_remix-blog_*", sweep_command)
+        self.assertIn("*_20260531t130000z-fedcba987654)", sweep_command)
 
         skipped = engine_app_ops._set_release_live_labels(
             self.ctx,

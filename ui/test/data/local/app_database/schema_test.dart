@@ -25,7 +25,7 @@ void main() {
       // constant: reading the constant would make the test agree with
       // whatever the code says, which is exactly the check it is supposed to
       // be performing.
-      expect(database.schemaVersion, 3);
+      expect(database.schemaVersion, 4);
       expect(database.migration, isNotNull);
     }, skip: !sqliteAvailable);
 
@@ -86,10 +86,13 @@ void main() {
       await migrated.customStatement(
         'ALTER TABLE worker_instances DROP COLUMN environment_json',
       );
+      await migrated.customStatement(
+        'ALTER TABLE app_releases DROP COLUMN worker_container_names_json',
+      );
       await migrated.customStatement('PRAGMA user_version = 1');
       await migrated.close();
 
-      // Phase 2: reopen; drift must upgrade 1 through 3 and backfill the row.
+      // Phase 2: reopen; drift must upgrade 1 through 4 and backfill the row.
       migrated = AppDatabase.forTesting(NativeDatabase(file));
       addTearDown(migrated.close);
       final rows = await migrated.select(migrated.servers).get();
@@ -99,7 +102,7 @@ void main() {
 
       expect(rows, hasLength(1));
       expect(rows.single.setupComplete, isTrue);
-      expect(versionRow.read<int>('user_version'), 3);
+      expect(versionRow.read<int>('user_version'), 4);
     }, skip: !sqliteAvailable);
 
     test(
@@ -157,11 +160,14 @@ void main() {
         await migrated.customStatement(
           'ALTER TABLE worker_instances DROP COLUMN environment_json',
         );
+        await migrated.customStatement(
+          'ALTER TABLE app_releases DROP COLUMN worker_container_names_json',
+        );
         await migrated.customStatement('PRAGMA user_version = 2');
         await migrated.close();
 
-        // Phase 2: reopen; drift must upgrade 2 to 3, convert the complete
-        // credential to DATABASE_* entries, and null every legacy column.
+        // Phase 2: reopen; drift must upgrade 2 through 4, convert the
+        // complete credential to DATABASE_* entries, and null every legacy column.
         migrated = AppDatabase.forTesting(NativeDatabase(file));
         addTearDown(migrated.close);
         final rows = await migrated.select(migrated.workerInstances).get();
@@ -169,7 +175,7 @@ void main() {
             .customSelect('PRAGMA user_version')
             .getSingle();
 
-        expect(versionRow.read<int>('user_version'), 3);
+        expect(versionRow.read<int>('user_version'), 4);
         final byId = {for (final row in rows) row.id: row};
         expect(jsonDecode(byId['queue-worker']!.environmentJson!), {
           'DATABASE_ENGINE': 'postgres',

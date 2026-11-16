@@ -4,6 +4,7 @@ import unittest
 from orchestrator.app_parts.app_config import WorkerConfig
 from orchestrator.app_parts.worker_runtime import (
     build_runtime_env_docker_flags,
+    build_worker_cleanup_command,
     build_worker_runtime_command_spec,
     build_worker_runtime_command_specs,
     render_runtime_env_stdin,
@@ -175,6 +176,26 @@ class TestWorkerRuntimeBuilder(unittest.TestCase):
 
         self.assertNotIn("--label =ignored", spec.run_command)
         self.assertNotIn("--label also_ignored=", spec.run_command)
+
+    def test_worker_cleanup_matches_every_incarnation_of_one_worker(self):
+        # A worker started under an earlier release has a different container
+        # name, so removal must enumerate names by worker identity instead of
+        # targeting the single name derived from the current live release.
+        command = build_worker_cleanup_command(
+            project_slug="remix-blog",
+            worker_id="queue-worker",
+        )
+        self.assertIn("docker ps -a --format '{{.Names}}'", command)
+        self.assertIn(
+            "deploydash_worker_remix-blog_queue-worker_",
+            command,
+        )
+        self.assertIn("docker rm -f", command)
+
+    def test_worker_cleanup_without_worker_id_covers_whole_project(self):
+        command = build_worker_cleanup_command(project_slug="remix-blog")
+        self.assertIn("deploydash_worker_remix-blog_", command)
+        self.assertIn("docker rm -f", command)
 
     def test_release_worker_uses_versioned_container_and_live_labels(self):
         specs = build_worker_runtime_command_specs(

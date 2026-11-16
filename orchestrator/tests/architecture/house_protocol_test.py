@@ -85,7 +85,7 @@ _DIRECT_HOST_CALL_BASELINE = {
     "firewall_status.py": 4,
     "infra_parts/system_settings.py": 3,
     "engine_runtime_common.py": 3,
-    "app_runtime_parts/release_lifecycle.py": 3,
+    "app_runtime_parts/release_lifecycle.py": 2,
     "postgres_runtime_parts/backup_support.py": 2,
     "postgres_runtime_parts/agent_access.py": 2,
     "infra_parts/docker_storage.py": 2,

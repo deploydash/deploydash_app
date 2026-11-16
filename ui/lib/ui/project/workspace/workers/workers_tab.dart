@@ -236,6 +236,40 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
         );
   }
 
+  /// Records the worker containers a successful operation just created
+  /// against the live release, before the journal entry is marked
+  /// committed: the local database is the registry of record for what
+  /// Deploy Dash created, and a response lost before this write leaves the
+  /// journal uncommitted for recovery instead of a gap in the registry.
+  Future<void> _recordWorkerContainerNames({
+    required Project project,
+    required Server server,
+    required Map<String, dynamic> response,
+  }) async {
+    final releaseId = response['live_release_id']?.toString().trim() ?? '';
+    if (releaseId.isEmpty) {
+      return;
+    }
+    final snapshot = WorkerRuntimeSnapshot.fromResponse(response);
+    final names = <String>[
+      for (final entry in snapshot.configured)
+        if (entry['container_name'] is String &&
+            (entry['container_name'] as String).trim().isNotEmpty)
+          (entry['container_name'] as String).trim(),
+    ];
+    if (names.isEmpty) {
+      return;
+    }
+    await ref
+        .read(appReleaseProvider.notifier)
+        .upsertWorkerContainerNames(
+          projectId: project.id,
+          serverId: server.id,
+          releaseId: releaseId,
+          containerNames: names,
+        );
+  }
+
   Future<void> _persistWorkers(String projectId) async {
     setState(() {
       _isSaving = true;
@@ -416,6 +450,11 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
         server: server,
         response: response,
       );
+      await _recordWorkerContainerNames(
+        project: project,
+        server: server,
+        response: response,
+      );
       await journaled.markCommitted(ref);
       final message = response['msg']?.toString().trim();
       messenger.showSnackBar(
@@ -531,6 +570,13 @@ class _WorkersTabContentState extends ConsumerState<_WorkersTabContent>
         server: server,
         response: response,
       );
+      if (operationId == 'worker_start' || operationId == 'worker_restart') {
+        await _recordWorkerContainerNames(
+          project: project,
+          server: server,
+          response: response,
+        );
+      }
       await journaled.markCommitted(ref);
       final message = response['msg']?.toString().trim();
       messenger.showSnackBar(

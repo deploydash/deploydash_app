@@ -14,6 +14,7 @@ the Caddy route was not written.
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from orchestrator.app_parts import parse_app_config
 from orchestrator.app_runtime_parts import release_lifecycle as engine_app_ops
@@ -99,6 +100,28 @@ class TestReleaseDeployFaultInjection(unittest.TestCase):
             app_config=app_config or self.app_config,
             normalized_parts=[],
         )
+
+    def _deploy_with_live_release(self, host):
+        # Seed a previous live release so the deploy has a real route to
+        # revert to. Without it the deploy is a first install, and a failed
+        # cutover removes the route instead of restoring one.
+        manifest_text = (
+            '{"releases":[{"release_id":"20260101t000000z-aaaa11111111",'
+            '"status":"live",'
+            '"web_container_name":"deploydash_app_remix-blog_20260101t000000z-aaaa11111111",'
+            '"image_name":"deploydash_remix-blog:release-20260101t000000z-aaaa11111111",'
+            '"worker_container_names":[]}]}'
+        )
+        ctx = replace(
+            self.ctx,
+            read_remote_file_text=lambda *args, **kwargs: manifest_text,
+        )
+        original = self.ctx
+        self.ctx = ctx
+        try:
+            return self._deploy(host)
+        finally:
+            self.ctx = original
 
     # --- ordinary remote failure, step by step ---------------------------
 
@@ -239,7 +262,7 @@ class TestReleaseDeployFaultInjection(unittest.TestCase):
             stderr_lines=["caddy: adapt failed"],
         )
 
-        result = self._deploy(host)
+        result = self._deploy_with_live_release(host)
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["msg"], "Switch live traffic to candidate release failed.")
@@ -258,7 +281,7 @@ class TestReleaseDeployFaultInjection(unittest.TestCase):
             stdout_lines=["FATAL: process exited after cutover"],
         )
 
-        result = self._deploy(host)
+        result = self._deploy_with_live_release(host)
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(

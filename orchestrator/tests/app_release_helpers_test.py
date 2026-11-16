@@ -120,68 +120,27 @@ class TestReleaseHelpers(AppReleaseFlowTestCase):
             self.app_config,
         )
         self.assertEqual(targets["live_release_id"], previous_live["release_id"])
-        self.assertFalse(targets["legacy"])
+        self.assertTrue(targets["has_previous_live_route"])
 
+        # No live release means a fresh install: plain container names and
+        # no previous route to preserve, regardless of what containers
+        # happen to exist on the server.
         empty_manifest_ctx = replace(
             self.ctx,
             read_remote_file_text=lambda *args, **kwargs: "",
         )
-        with patch.object(
-            engine_app_ops,
-            "_legacy_container_is_running",
-            return_value=True,
-        ):
-            legacy_targets = engine_app_ops._release_runtime_targets(
-                empty_manifest_ctx,
-                SimpleNamespace(),
-                self.app_config,
-            )
-        self.assertTrue(legacy_targets["legacy"])
-        self.assertTrue(legacy_targets["has_previous_live_route"])
+        fresh_targets = engine_app_ops._release_runtime_targets(
+            empty_manifest_ctx,
+            SimpleNamespace(),
+            self.app_config,
+        )
+        self.assertIsNone(fresh_targets["live_release"])
+        self.assertIsNone(fresh_targets["live_release_id"])
         self.assertEqual(
-            legacy_targets["web_container_name"],
+            fresh_targets["web_container_name"],
             self.app_config.container_name,
         )
-
-        with patch.object(
-            engine_app_ops,
-            "_legacy_container_is_running",
-            return_value=False,
-        ):
-            first_release_targets = engine_app_ops._release_runtime_targets(
-                empty_manifest_ctx,
-                SimpleNamespace(),
-                self.app_config,
-            )
-        self.assertFalse(first_release_targets["has_previous_live_route"])
-
-        running_legacy_host = _FakeHost(status=True)
-        stopped_legacy_host = _FakeHost(status=False)
-        self.assertTrue(
-            engine_app_ops._legacy_container_is_running(
-                running_legacy_host,
-                self.app_config.container_name,
-            )
-        )
-        self.assertFalse(
-            engine_app_ops._legacy_container_is_running(
-                stopped_legacy_host,
-                self.app_config.container_name,
-            )
-        )
-        self.assertIn(
-            self.app_config.container_name,
-            running_legacy_host.calls[0]["command"],
-        )
-        self.assertEqual(running_legacy_host.calls[0]["timeout"], 10)
-        self.assertTrue(running_legacy_host.calls[0]["sudo"])
-
-        self.assertFalse(
-            engine_app_ops._legacy_container_is_running(
-                SimpleNamespace(),
-                self.app_config.container_name,
-            )
-        )
+        self.assertFalse(fresh_targets["has_previous_live_route"])
 
         def _raise_missing_manifest_file(*args, **kwargs):
             raise RuntimeError(

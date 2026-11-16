@@ -18,11 +18,6 @@ def _disconnect(resources):
         ),
         ("Remove managed worker containers", resources.worker_cleanup_command, True),
         (
-            "Remove legacy worker container",
-            f"docker rm -f {resources.quoted_worker_legacy_container_name} >/dev/null 2>&1 || true",
-            True,
-        ),
-        (
             "Remove app image",
             "docker images --format '{{.Repository}}:{{.Tag}}' | "
             f"grep -E '^{re.escape(image_prefix)}' | "
@@ -98,7 +93,7 @@ def _workers_apply(resources):
     return [
         ("Resolve worker network", resources.worker_network_command, False),
         ("Verify web app image exists", resources.worker_image_check_command, False),
-        ("Remove stale worker containers", resources.worker_cleanup_command, True),
+        ("Remove stale worker containers", resources.worker_cleanup_command, False),
         *[
             (
                 f"Start worker {entry.worker.id}",
@@ -129,6 +124,11 @@ def _worker_start(resources):
         ("Resolve worker network", resources.worker_network_command, False),
         ("Verify web app image exists", resources.worker_image_check_command, False),
         (
+            "Remove previous worker containers",
+            resources.target_worker_cleanup_command or "false",
+            False,
+        ),
+        (
             f"Start worker {resources.normalized_worker_id}",
             resources.with_worker_network_resolution(target.run_command) if target else "false",
             False,
@@ -142,8 +142,8 @@ def _worker_stop(resources):
     return [
         (
             f"Stop worker {resources.normalized_worker_id}",
-            resources.target_worker_stop_command or "false",
-            True,
+            resources.target_worker_cleanup_command or "false",
+            False,
         ),
         ("Collect worker runtime status", resources.worker_status_command, True),
     ]
@@ -154,6 +154,11 @@ def _worker_restart(resources):
     return [
         ("Resolve worker network", resources.worker_network_command, False),
         ("Verify web app image exists", resources.worker_image_check_command, False),
+        (
+            "Remove previous worker containers",
+            resources.target_worker_cleanup_command or "false",
+            False,
+        ),
         (
             f"Restart worker {resources.normalized_worker_id}",
             resources.with_worker_network_resolution(target.run_command) if target else "false",

@@ -171,7 +171,6 @@ def _scheduler_script_text(container_name, command_text):
 
 def _web_app_scheduler_script_text(project_slug, command_text):
     quoted_project_slug = shlex.quote(project_slug)
-    quoted_legacy_container = shlex.quote(server_identifiers.app_container(project_slug))
     quoted_manifest_path = shlex.quote(
         f"{_APPS_ROOT}/.deploydash/apps/{project_slug}/releases.json",
     )
@@ -181,7 +180,6 @@ def _web_app_scheduler_script_text(project_slug, command_text):
         "set -eu\n"
         f"PROJECT_SLUG={quoted_project_slug}\n"
         f"RELEASE_MANIFEST={quoted_manifest_path}\n"
-        f"LEGACY_CONTAINER={quoted_legacy_container}\n"
         'LIVE_CONTAINER="$(/usr/bin/docker ps '
         f'--filter "label={server_identifiers.MANAGED_LABEL_PAIR}" '
         f'--filter "label={server_identifiers.LABEL_LIVE}=true" '
@@ -209,10 +207,6 @@ def _web_app_scheduler_script_text(project_slug, command_text):
         "    break\n"
         "PY\n"
         ')"\n'
-        "fi\n"
-        'if [ -z "${LIVE_CONTAINER}" ] && '
-        '/usr/bin/docker inspect "${LEGACY_CONTAINER}" >/dev/null 2>&1; then\n'
-        '  LIVE_CONTAINER="${LEGACY_CONTAINER}"\n'
         "fi\n"
         'if [ -z "${LIVE_CONTAINER}" ]; then\n'
         "  echo 'Deploy Dash could not find the live web app container for this scheduled job.' >&2\n"
