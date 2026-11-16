@@ -40,7 +40,11 @@ part 'app_database.g.dart';
 /// Version 3 replaces the worker `database*` columns with one
 /// `environment_json` object; the migration converts complete credentials
 /// to `DATABASE_*` entries and nulls the legacy columns either way.
-const int appDatabaseSchemaVersion = 3;
+///
+/// Version 4 adds `worker_container_names_json` to `app_releases`, so the
+/// mirror records which worker containers each release owns; the migration
+/// is a plain `addColumn` and existing rows read back as null.
+const int appDatabaseSchemaVersion = 4;
 
 /// Converts v2 worker database columns to v3 environment entries.
 ///
@@ -1117,6 +1121,12 @@ class AppReleases extends Table {
   /// The workers bound to this release, as JSON.
   TextColumn get workersJson => text().nullable()();
 
+  /// The worker container names recorded for this release, as a JSON
+  /// array. Every worker container Deploy Dash creates under this release
+  /// is recorded here, so the mirror knows which containers each release
+  /// owns even after the server's own manifest is gone.
+  TextColumn get workerContainerNamesJson => text().nullable()();
+
   /// When the server last confirmed the release still exists.
   DateTimeColumn get lastObservedAt => dateTime().nullable()();
 
@@ -1825,6 +1835,12 @@ class AppDatabase extends _$AppDatabase {
           workerInstances.environmentJson,
         );
         await _migrateWorkerDatabaseColumns(migrator);
+      }
+      if (from < 4) {
+        await migrator.addColumn(
+          appReleases,
+          appReleases.workerContainerNamesJson,
+        );
       }
     },
     onCreate: (migrator) async {

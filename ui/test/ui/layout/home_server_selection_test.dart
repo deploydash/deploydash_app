@@ -3,7 +3,7 @@ import 'package:ui/data/local/project_deletion_recovery_repository.dart';
 import 'package:ui/providers/project_provider.dart';
 import 'package:ui/ui/layout/home_dashboard_view.dart';
 import 'package:ui/ui/system/app_workspace.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _server = Server(

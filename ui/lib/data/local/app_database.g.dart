@@ -14434,6 +14434,17 @@ class $AppReleasesTable extends AppReleases
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _workerContainerNamesJsonMeta =
+      const VerificationMeta('workerContainerNamesJson');
+  @override
+  late final GeneratedColumn<String> workerContainerNamesJson =
+      GeneratedColumn<String>(
+        'worker_container_names_json',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _lastObservedAtMeta = const VerificationMeta(
     'lastObservedAt',
   );
@@ -14489,6 +14500,7 @@ class $AppReleasesTable extends AppReleases
     rollbackReason,
     runtimeEnvJson,
     workersJson,
+    workerContainerNamesJson,
     lastObservedAt,
     createdAt,
     updatedAt,
@@ -14635,6 +14647,15 @@ class $AppReleasesTable extends AppReleases
         ),
       );
     }
+    if (data.containsKey('worker_container_names_json')) {
+      context.handle(
+        _workerContainerNamesJsonMeta,
+        workerContainerNamesJson.isAcceptableOrUnknown(
+          data['worker_container_names_json']!,
+          _workerContainerNamesJsonMeta,
+        ),
+      );
+    }
     if (data.containsKey('last_observed_at')) {
       context.handle(
         _lastObservedAtMeta,
@@ -14733,6 +14754,10 @@ class $AppReleasesTable extends AppReleases
         DriftSqlType.string,
         data['${effectivePrefix}workers_json'],
       ),
+      workerContainerNamesJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}worker_container_names_json'],
+      ),
       lastObservedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_observed_at'],
@@ -14808,6 +14833,12 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
   /// The workers bound to this release, as JSON.
   final String? workersJson;
 
+  /// The worker container names recorded for this release, as a JSON
+  /// array. Every worker container Deploy Dash creates under this release
+  /// is recorded here, so the mirror knows which containers each release
+  /// owns even after the server's own manifest is gone.
+  final String? workerContainerNamesJson;
+
   /// When the server last confirmed the release still exists.
   final DateTime? lastObservedAt;
 
@@ -14834,6 +14865,7 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
     this.rollbackReason,
     this.runtimeEnvJson,
     this.workersJson,
+    this.workerContainerNamesJson,
     this.lastObservedAt,
     required this.createdAt,
     required this.updatedAt,
@@ -14877,6 +14909,11 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
     }
     if (!nullToAbsent || workersJson != null) {
       map['workers_json'] = Variable<String>(workersJson);
+    }
+    if (!nullToAbsent || workerContainerNamesJson != null) {
+      map['worker_container_names_json'] = Variable<String>(
+        workerContainerNamesJson,
+      );
     }
     if (!nullToAbsent || lastObservedAt != null) {
       map['last_observed_at'] = Variable<DateTime>(lastObservedAt);
@@ -14925,6 +14962,9 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
       workersJson: workersJson == null && nullToAbsent
           ? const Value.absent()
           : Value(workersJson),
+      workerContainerNamesJson: workerContainerNamesJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(workerContainerNamesJson),
       lastObservedAt: lastObservedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(lastObservedAt),
@@ -14958,6 +14998,9 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
       rollbackReason: serializer.fromJson<String?>(json['rollbackReason']),
       runtimeEnvJson: serializer.fromJson<String?>(json['runtimeEnvJson']),
       workersJson: serializer.fromJson<String?>(json['workersJson']),
+      workerContainerNamesJson: serializer.fromJson<String?>(
+        json['workerContainerNamesJson'],
+      ),
       lastObservedAt: serializer.fromJson<DateTime?>(json['lastObservedAt']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -14986,6 +15029,9 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
       'rollbackReason': serializer.toJson<String?>(rollbackReason),
       'runtimeEnvJson': serializer.toJson<String?>(runtimeEnvJson),
       'workersJson': serializer.toJson<String?>(workersJson),
+      'workerContainerNamesJson': serializer.toJson<String?>(
+        workerContainerNamesJson,
+      ),
       'lastObservedAt': serializer.toJson<DateTime?>(lastObservedAt),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -15010,6 +15056,7 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
     Value<String?> rollbackReason = const Value.absent(),
     Value<String?> runtimeEnvJson = const Value.absent(),
     Value<String?> workersJson = const Value.absent(),
+    Value<String?> workerContainerNamesJson = const Value.absent(),
     Value<DateTime?> lastObservedAt = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -15041,6 +15088,9 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
         ? runtimeEnvJson.value
         : this.runtimeEnvJson,
     workersJson: workersJson.present ? workersJson.value : this.workersJson,
+    workerContainerNamesJson: workerContainerNamesJson.present
+        ? workerContainerNamesJson.value
+        : this.workerContainerNamesJson,
     lastObservedAt: lastObservedAt.present
         ? lastObservedAt.value
         : this.lastObservedAt,
@@ -15080,6 +15130,9 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
       workersJson: data.workersJson.present
           ? data.workersJson.value
           : this.workersJson,
+      workerContainerNamesJson: data.workerContainerNamesJson.present
+          ? data.workerContainerNamesJson.value
+          : this.workerContainerNamesJson,
       lastObservedAt: data.lastObservedAt.present
           ? data.lastObservedAt.value
           : this.lastObservedAt,
@@ -15108,6 +15161,7 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
           ..write('rollbackReason: $rollbackReason, ')
           ..write('runtimeEnvJson: $runtimeEnvJson, ')
           ..write('workersJson: $workersJson, ')
+          ..write('workerContainerNamesJson: $workerContainerNamesJson, ')
           ..write('lastObservedAt: $lastObservedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -15116,7 +15170,7 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     projectId,
     serverId,
@@ -15134,10 +15188,11 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
     rollbackReason,
     runtimeEnvJson,
     workersJson,
+    workerContainerNamesJson,
     lastObservedAt,
     createdAt,
     updatedAt,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -15159,6 +15214,7 @@ class AppReleaseRow extends DataClass implements Insertable<AppReleaseRow> {
           other.rollbackReason == this.rollbackReason &&
           other.runtimeEnvJson == this.runtimeEnvJson &&
           other.workersJson == this.workersJson &&
+          other.workerContainerNamesJson == this.workerContainerNamesJson &&
           other.lastObservedAt == this.lastObservedAt &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -15182,6 +15238,7 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
   final Value<String?> rollbackReason;
   final Value<String?> runtimeEnvJson;
   final Value<String?> workersJson;
+  final Value<String?> workerContainerNamesJson;
   final Value<DateTime?> lastObservedAt;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
@@ -15204,6 +15261,7 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
     this.rollbackReason = const Value.absent(),
     this.runtimeEnvJson = const Value.absent(),
     this.workersJson = const Value.absent(),
+    this.workerContainerNamesJson = const Value.absent(),
     this.lastObservedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -15227,6 +15285,7 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
     this.rollbackReason = const Value.absent(),
     this.runtimeEnvJson = const Value.absent(),
     this.workersJson = const Value.absent(),
+    this.workerContainerNamesJson = const Value.absent(),
     this.lastObservedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -15254,6 +15313,7 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
     Expression<String>? rollbackReason,
     Expression<String>? runtimeEnvJson,
     Expression<String>? workersJson,
+    Expression<String>? workerContainerNamesJson,
     Expression<DateTime>? lastObservedAt,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
@@ -15278,6 +15338,8 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
       if (rollbackReason != null) 'rollback_reason': rollbackReason,
       if (runtimeEnvJson != null) 'runtime_env_json': runtimeEnvJson,
       if (workersJson != null) 'workers_json': workersJson,
+      if (workerContainerNamesJson != null)
+        'worker_container_names_json': workerContainerNamesJson,
       if (lastObservedAt != null) 'last_observed_at': lastObservedAt,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -15303,6 +15365,7 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
     Value<String?>? rollbackReason,
     Value<String?>? runtimeEnvJson,
     Value<String?>? workersJson,
+    Value<String?>? workerContainerNamesJson,
     Value<DateTime?>? lastObservedAt,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
@@ -15327,6 +15390,8 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
       rollbackReason: rollbackReason ?? this.rollbackReason,
       runtimeEnvJson: runtimeEnvJson ?? this.runtimeEnvJson,
       workersJson: workersJson ?? this.workersJson,
+      workerContainerNamesJson:
+          workerContainerNamesJson ?? this.workerContainerNamesJson,
       lastObservedAt: lastObservedAt ?? this.lastObservedAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -15390,6 +15455,11 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
     if (workersJson.present) {
       map['workers_json'] = Variable<String>(workersJson.value);
     }
+    if (workerContainerNamesJson.present) {
+      map['worker_container_names_json'] = Variable<String>(
+        workerContainerNamesJson.value,
+      );
+    }
     if (lastObservedAt.present) {
       map['last_observed_at'] = Variable<DateTime>(lastObservedAt.value);
     }
@@ -15425,6 +15495,7 @@ class AppReleasesCompanion extends UpdateCompanion<AppReleaseRow> {
           ..write('rollbackReason: $rollbackReason, ')
           ..write('runtimeEnvJson: $runtimeEnvJson, ')
           ..write('workersJson: $workersJson, ')
+          ..write('workerContainerNamesJson: $workerContainerNamesJson, ')
           ..write('lastObservedAt: $lastObservedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -31872,6 +31943,7 @@ typedef $$AppReleasesTableCreateCompanionBuilder =
       Value<String?> rollbackReason,
       Value<String?> runtimeEnvJson,
       Value<String?> workersJson,
+      Value<String?> workerContainerNamesJson,
       Value<DateTime?> lastObservedAt,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -31896,6 +31968,7 @@ typedef $$AppReleasesTableUpdateCompanionBuilder =
       Value<String?> rollbackReason,
       Value<String?> runtimeEnvJson,
       Value<String?> workersJson,
+      Value<String?> workerContainerNamesJson,
       Value<DateTime?> lastObservedAt,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -31993,6 +32066,11 @@ class $$AppReleasesTableFilterComposer
 
   ColumnFilters<String> get workersJson => $composableBuilder(
     column: $table.workersJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get workerContainerNamesJson => $composableBuilder(
+    column: $table.workerContainerNamesJson,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -32106,6 +32184,11 @@ class $$AppReleasesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get workerContainerNamesJson => $composableBuilder(
+    column: $table.workerContainerNamesJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get lastObservedAt => $composableBuilder(
     column: $table.lastObservedAt,
     builder: (column) => ColumnOrderings(column),
@@ -32196,6 +32279,11 @@ class $$AppReleasesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get workerContainerNamesJson => $composableBuilder(
+    column: $table.workerContainerNamesJson,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get lastObservedAt => $composableBuilder(
     column: $table.lastObservedAt,
     builder: (column) => column,
@@ -32256,6 +32344,7 @@ class $$AppReleasesTableTableManager
                 Value<String?> rollbackReason = const Value.absent(),
                 Value<String?> runtimeEnvJson = const Value.absent(),
                 Value<String?> workersJson = const Value.absent(),
+                Value<String?> workerContainerNamesJson = const Value.absent(),
                 Value<DateTime?> lastObservedAt = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -32278,6 +32367,7 @@ class $$AppReleasesTableTableManager
                 rollbackReason: rollbackReason,
                 runtimeEnvJson: runtimeEnvJson,
                 workersJson: workersJson,
+                workerContainerNamesJson: workerContainerNamesJson,
                 lastObservedAt: lastObservedAt,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -32302,6 +32392,7 @@ class $$AppReleasesTableTableManager
                 Value<String?> rollbackReason = const Value.absent(),
                 Value<String?> runtimeEnvJson = const Value.absent(),
                 Value<String?> workersJson = const Value.absent(),
+                Value<String?> workerContainerNamesJson = const Value.absent(),
                 Value<DateTime?> lastObservedAt = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -32324,6 +32415,7 @@ class $$AppReleasesTableTableManager
                 rollbackReason: rollbackReason,
                 runtimeEnvJson: runtimeEnvJson,
                 workersJson: workersJson,
+                workerContainerNamesJson: workerContainerNamesJson,
                 lastObservedAt: lastObservedAt,
                 createdAt: createdAt,
                 updatedAt: updatedAt,

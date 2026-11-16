@@ -157,6 +157,23 @@ class AppReleaseNotifier extends Notifier<AppReleaseState> {
   }
 
   // end coverage-gate
+  Future<void> upsertWorkerContainerNames({
+    required String projectId,
+    required String serverId,
+    required String releaseId,
+    required List<String> containerNames,
+  }) async {
+    await ref
+        .read(appReleaseRepositoryProvider)
+        .upsertWorkerContainerNames(
+          projectId: projectId,
+          serverId: serverId,
+          releaseId: releaseId,
+          containerNames: containerNames,
+        );
+    await loadScope(projectId: projectId, serverId: serverId);
+  }
+
   Future<void> upsertWorkerRuntimeSnapshot(
     WorkerRuntimeSnapshotRecord snapshot,
   ) async {

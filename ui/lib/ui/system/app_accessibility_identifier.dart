@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Publishes a stable native accessibility identifier for package-boundary
 /// automation without changing the visible or spoken label.

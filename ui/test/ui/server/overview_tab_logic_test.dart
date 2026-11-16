@@ -1,6 +1,6 @@
 import 'package:ui/ui/server/management/overview_tab_logic.dart';
 import 'package:ui/utils/payload_codecs.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yaru/yaru.dart';
 

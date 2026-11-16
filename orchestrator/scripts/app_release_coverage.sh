@@ -127,6 +127,7 @@ symbols_by_path = {
         "build_runtime_env_docker_flags",
         "WorkerRuntimeCommandSpec",
         "_worker_env_flags",
+        "build_worker_cleanup_command",
         "build_worker_runtime_command_spec",
     ),
     "src/orchestrator/engine.py": (
@@ -158,6 +159,9 @@ symbols_by_path = {
         "build_plugin._tail_from_params",
         "build_plugin._string_param",
     ),
+    # `_legacy_container_is_running` and `_legacy_worker_container_names`
+    # were removed with pre-manifest install support: no live release means
+    # a fresh install, so nothing probes or names a legacy container.
     "src/orchestrator/app_runtime_parts/release_lifecycle.py": (
         "_run_remote_command",
         "_load_release_manifest",
@@ -165,7 +169,6 @@ symbols_by_path = {
         "_release_inventory_response",
         "_release_failure_inventory_extra",
         "_release_runtime_targets",
-        "_legacy_container_is_running",
         "_build_clone_or_update_command",
         "_build_release_run_command",
         "_release_route_target",
@@ -174,7 +177,6 @@ symbols_by_path = {
         "_public_health_from_output",
         "_probe_public_health",
         "_release_worker_container_names",
-        "_legacy_worker_container_names",
         "_write_caddy_route",
         "_restore_or_remove_caddy_route",
         "_cleanup_failed_release_after_route_cutover",

@@ -80,7 +80,6 @@ __all__ = [
     "caddy_custom_image",
     "caddy_custom_previous_image",
     "label_pair",
-    "legacy_worker_container",
     "network_name",
     "postgres_agent_reader_role_name",
     "postgres_backup_cron_name",
@@ -144,23 +143,13 @@ def release_worker_container(project_slug: str, worker_id: str, release_id: str)
     return f"{worker_container(project_slug, worker_id)}_{safe_segment(release_id, 'release id')}"
 
 
-def legacy_worker_container(project_slug: str) -> str:
-    """Return the pre-multi-worker container name for a project's worker.
-
-    Projects deployed before workers gained ids have a container named
-    without one. The runtime reconciliation path still looks for it; dropping
-    this would orphan that container on a real server.
-    """
-    return f"{MANAGED_PREFIX}_worker_{safe_segment(project_slug, 'project slug')}"
-
-
 def worker_container_prefix(project_slug: str) -> str:
     """Return the prefix every worker container of a project shares.
 
     The trailing separator is load-bearing: pruning by `deploydash_worker_demo`
     without it would also match project `demo-staging`.
     """
-    return f"{legacy_worker_container(project_slug)}_"
+    return f"{MANAGED_PREFIX}_worker_{safe_segment(project_slug, 'project slug')}_"
 
 
 def caddy_container() -> str:

@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:ui/services/concurrency_engine.dart';
 import 'package:ui/ui/terminal/terminal_bottom_sheet.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 

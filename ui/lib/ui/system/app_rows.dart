@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// One labeled value in a single row: a fixed-width label, a gap, a value.
 ///

@@ -15,7 +15,7 @@ import 'package:ui/providers/server_provider.dart';
 import 'package:ui/services/concurrency_engine.dart';
 import 'package:ui/services/ssh_service.dart';
 import 'package:ui/ui/server/server_management_view.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -34,7 +34,7 @@ export 'package:ui/ui/server/server_management_view.dart';
 export 'package:ui/ui/system/app_dialogs.dart';
 export 'package:ui/ui/system/app_window_title.dart';
 export 'package:file_selector/file_selector.dart';
-export 'package:flutter/material.dart';
+export 'package:material_ui/material_ui.dart';
 export 'package:flutter_riverpod/flutter_riverpod.dart';
 
 export '../../../../_support/sqlite_test_harness.dart';

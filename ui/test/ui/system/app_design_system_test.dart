@@ -9,7 +9,7 @@ import 'package:ui/ui/system/app_state_views.dart';
 import 'package:ui/ui/system/app_theme.dart';
 import 'package:ui/ui/system/app_workspace.dart';
 import 'package:ui/ui/system/container_runtime_status.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';

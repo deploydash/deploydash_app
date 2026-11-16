@@ -49,15 +49,6 @@ class TestContainerNames(unittest.TestCase):
             "deploydash_worker_my-nextjs_queue-worker_20260903t101500z-abc123",
         )
 
-    def test_legacy_worker_container_has_no_worker_segment(self):
-        # runtime_operations still looks for the pre-multi-worker name when
-        # reconciling a project deployed before workers gained ids. Dropping
-        # it would orphan that container on a real server.
-        self.assertEqual(
-            server_identifiers.legacy_worker_container("my-nextjs"),
-            "deploydash_worker_my-nextjs",
-        )
-
     def test_worker_container_prefix_ends_with_the_separator(self):
         # release_lifecycle prunes by prefix; without the trailing underscore
         # "demo" would also match "demo-staging".

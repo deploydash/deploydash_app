@@ -1,6 +1,6 @@
 import 'package:ui/ui/system/app_dialogs.dart';
 import 'package:ui/ui/system/app_theme.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // Characterization for D-70 (T-012, commit 1): the confirm-actions twin

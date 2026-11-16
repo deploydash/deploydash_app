@@ -34,6 +34,7 @@ class AppReleaseRecord {
     this.rollbackReason,
     this.runtimeEnvJson,
     this.workersJson,
+    this.workerContainerNamesJson,
     this.lastObservedAt,
     required this.createdAt,
     required this.updatedAt,
@@ -91,6 +92,10 @@ class AppReleaseRecord {
 
   /// The workers bound to this release, as JSON.
   final String? workersJson;
+
+  /// The worker container names recorded for this release, as a JSON
+  /// array, or null when none has been recorded yet.
+  final String? workerContainerNamesJson;
 
   /// When the server last confirmed this release still exists.
   final DateTime? lastObservedAt;
@@ -361,6 +366,13 @@ class AppReleaseRepository {
               ..where((table) => table.id.equals(normalized.id))
               ..limit(1))
             .getSingleOrNull();
+    // Worker container names are append-only facts: a payload that does not
+    // mention the workers started from the Workers tab must not erase the
+    // ones recorded earlier, so they merge instead of overwriting.
+    final mergedWorkerContainerNames = <String>{
+      ..._decodeWorkerContainerNames(existing?.workerContainerNamesJson),
+      ..._decodeWorkerContainerNames(normalized.workerContainerNamesJson),
+    }.toList()..sort();
     await _database
         .into(_database.appReleases)
         .insertOnConflictUpdate(
@@ -382,11 +394,107 @@ class AppReleaseRepository {
             rollbackReason: Value(normalized.rollbackReason),
             runtimeEnvJson: Value(normalized.runtimeEnvJson),
             workersJson: Value(normalized.workersJson),
+            workerContainerNamesJson: Value(
+              mergedWorkerContainerNames.isEmpty
+                  ? null
+                  : jsonEncode(mergedWorkerContainerNames),
+            ),
             lastObservedAt: Value(normalized.lastObservedAt),
             createdAt: Value(existing?.createdAt ?? normalized.createdAt),
             updatedAt: Value(normalized.updatedAt),
           ),
         );
+  }
+
+  /// Records worker containers created under one release.
+  ///
+  /// Names merge with whatever is already recorded rather than replacing
+  /// it: a release's containers are reported incrementally across deploys
+  /// and Workers-tab operations, and a later report must not drop names an
+  /// earlier one recorded. When the release has no row yet -- a worker
+  /// operation ran before any deploy or release listing synced it -- a
+  /// minimal live row is created so the names are never lost.
+  Future<void> upsertWorkerContainerNames({
+    required String projectId,
+    required String serverId,
+    required String releaseId,
+    required List<String> containerNames,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    final normalizedServerId = serverId.trim();
+    final normalizedReleaseId = releaseId.trim();
+    final names = <String>{
+      for (final name in containerNames)
+        if (name.trim().isNotEmpty) name.trim(),
+    };
+    if (normalizedProjectId.isEmpty ||
+        normalizedServerId.isEmpty ||
+        normalizedReleaseId.isEmpty ||
+        names.isEmpty) {
+      return;
+    }
+    final id = _releaseId(
+      projectId: normalizedProjectId,
+      serverId: normalizedServerId,
+      releaseId: normalizedReleaseId,
+    );
+    final now = DateTime.now();
+    final existing =
+        await (_database.select(_database.appReleases)
+              ..where((table) => table.id.equals(id))
+              ..limit(1))
+            .getSingleOrNull();
+    final merged = <String>{
+      ..._decodeWorkerContainerNames(existing?.workerContainerNamesJson),
+      ...names,
+    }.toList()..sort();
+    final namesJson = jsonEncode(merged);
+    if (existing == null) {
+      await _database
+          .into(_database.appReleases)
+          .insert(
+            AppReleasesCompanion.insert(
+              id: id,
+              projectId: normalizedProjectId,
+              serverId: normalizedServerId,
+              releaseId: normalizedReleaseId,
+              status: 'live',
+              workerContainerNamesJson: Value(namesJson),
+              lastObservedAt: Value(now),
+              createdAt: Value(now),
+              updatedAt: Value(now),
+            ),
+          );
+      return;
+    }
+    await (_database.update(
+      _database.appReleases,
+    )..where((table) => table.id.equals(id))).write(
+      AppReleasesCompanion(
+        workerContainerNamesJson: Value(namesJson),
+        lastObservedAt: Value(now),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
+  static List<String> _decodeWorkerContainerNames(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return const [];
+    }
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is List) {
+        return [
+          for (final entry in decoded)
+            if (entry is String && entry.trim().isNotEmpty) entry.trim(),
+        ];
+      }
+    } on FormatException {
+      // A malformed value is treated as no recorded names rather than
+      // failing the operation that observed them.
+    }
+    return const [];
   }
 
   // coverage-gate: release_runtime_snapshot_repository
@@ -741,6 +849,9 @@ class AppReleaseRepository {
       workersJson: payload['workers'] is List
           ? jsonEncode(payload['workers'])
           : null,
+      workerContainerNamesJson: payload['worker_container_names'] is List
+          ? jsonEncode(payload['worker_container_names'])
+          : null,
       lastObservedAt: observedAt ?? now,
       createdAt: now,
       updatedAt: now,
@@ -823,6 +934,7 @@ class AppReleaseRepository {
       rollbackReason: trimOrNull(row.rollbackReason),
       runtimeEnvJson: trimOrNull(row.runtimeEnvJson),
       workersJson: trimOrNull(row.workersJson),
+      workerContainerNamesJson: trimOrNull(row.workerContainerNamesJson),
       lastObservedAt: row.lastObservedAt,
       createdAt: row.createdAt,
       updatedAt: now,
@@ -848,6 +960,7 @@ class AppReleaseRepository {
       rollbackReason: row.rollbackReason,
       runtimeEnvJson: row.runtimeEnvJson,
       workersJson: row.workersJson,
+      workerContainerNamesJson: row.workerContainerNamesJson,
       lastObservedAt: row.lastObservedAt,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

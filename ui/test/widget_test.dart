@@ -1,6 +1,6 @@
 import 'package:ui/main.dart';
 import 'package:ui/providers/server_list_provider.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
