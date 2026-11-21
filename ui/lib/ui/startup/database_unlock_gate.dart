@@ -275,6 +275,12 @@ class _DatabaseUnlockGateState extends State<DatabaseUnlockGate> {
   /// Validates the unlock passphrase. Creation now happens through the
   /// in-wizard enrollment handoff, never through this submit path.
   Future<void> _submitPassphrase() async {
+    // The passphrase field stays enabled while unlocking runs (see the
+    // AbsorbPointer below), so a keyboard submit can still reach here
+    // mid-flight: ignore it rather than validating twice.
+    if (_isSubmitting) {
+      return;
+    }
     final passphrase = _passphraseController.text.trim();
 
     if (passphrase.isEmpty) {
@@ -464,77 +470,84 @@ class _DatabaseUnlockGateState extends State<DatabaseUnlockGate> {
             ),
           ),
         ],
-        child: AppFormSection(
-          children: [
-            if (isRestoreMode) ...[
-              AppTextFormField(
-                fieldKey: const Key('database-restore-path-field'),
-                controller: _restorePathController,
-                labelText: 'Backup file',
-                readOnly: true,
-                enabled: !_isRestoring,
-              ),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  key: const Key('database-restore-browse-button'),
-                  onPressed: _isRestoring ? null : _selectRestoreFile,
-                  icon: const Icon(Icons.folder_open),
-                  label: Text(startupBrowseBackupButtonLabel()),
+        // The fields below stay enabled for their whole lifetime, even
+        // while submitting: toggling `enabled` on a focused secure field
+        // recreates its macOS accessibility node, which crashes the Flutter
+        // engine (AXPlatformNodeCocoa startEditing, flutter/flutter#151428).
+        // Input is gated with AbsorbPointer instead, which never touches
+        // the semantics tree.
+        child: AbsorbPointer(
+          absorbing: _isSubmitting || _isRestoring,
+          child: AppFormSection(
+            children: [
+              if (isRestoreMode) ...[
+                AppTextFormField(
+                  fieldKey: const Key('database-restore-path-field'),
+                  controller: _restorePathController,
+                  labelText: 'Backup file',
+                  readOnly: true,
                 ),
-              ),
-            ] else ...[
-              AppTextFormField(
-                fieldKey: const Key('database-passphrase-field'),
-                controller: _passphraseController,
-                labelText: 'Passphrase',
-                obscureText: _obscurePassphrase,
-                enabled: !_isSubmitting,
-                focusNode: _passphraseFocusNode,
-                autofocus: true,
-                textInputAction: TextInputAction.done,
-                onChanged: (_) {
-                  if (_errorMessage == null) {
-                    return;
-                  }
-                  setState(() {
-                    _errorMessage = null;
-                  });
-                },
-                onFieldSubmitted: (_) => _submitPassphrase(),
-                suffixIcon: IconButton(
-                  key: const Key('database-passphrase-visibility'),
-                  tooltip: _obscurePassphrase
-                      ? 'Show passphrase'
-                      : 'Hide passphrase',
-                  onPressed: () => setState(() {
-                    _obscurePassphrase = !_obscurePassphrase;
-                  }),
-                  icon: Icon(
-                    _obscurePassphrase
-                        ? Icons.visibility
-                        : Icons.visibility_off,
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    key: const Key('database-restore-browse-button'),
+                    onPressed: _isRestoring ? null : _selectRestoreFile,
+                    icon: const Icon(Icons.folder_open),
+                    label: Text(startupBrowseBackupButtonLabel()),
                   ),
                 ),
-              ),
+              ] else ...[
+                AppTextFormField(
+                  fieldKey: const Key('database-passphrase-field'),
+                  controller: _passphraseController,
+                  labelText: 'Passphrase',
+                  obscureText: _obscurePassphrase,
+                  focusNode: _passphraseFocusNode,
+                  autofocus: true,
+                  textInputAction: TextInputAction.done,
+                  onChanged: (_) {
+                    if (_errorMessage == null) {
+                      return;
+                    }
+                    setState(() {
+                      _errorMessage = null;
+                    });
+                  },
+                  onFieldSubmitted: (_) => _submitPassphrase(),
+                  suffixIcon: IconButton(
+                    key: const Key('database-passphrase-visibility'),
+                    tooltip: _obscurePassphrase
+                        ? 'Show passphrase'
+                        : 'Hide passphrase',
+                    onPressed: () => setState(() {
+                      _obscurePassphrase = !_obscurePassphrase;
+                    }),
+                    icon: Icon(
+                      _obscurePassphrase
+                          ? Icons.visibility
+                          : Icons.visibility_off,
+                    ),
+                  ),
+                ),
+              ],
+              if (_statusMessage case final statusMessage?)
+                Text(
+                  statusMessage,
+                  key: const Key('database-startup-status'),
+                  style: TextStyle(
+                    color: Theme.of(shellContext).colorScheme.primary,
+                  ),
+                ),
+              if (_errorMessage case final errorMessage?)
+                Text(
+                  errorMessage,
+                  key: const Key('database-passphrase-error'),
+                  style: TextStyle(
+                    color: Theme.of(shellContext).colorScheme.error,
+                  ),
+                ),
             ],
-            if (_statusMessage case final statusMessage?)
-              Text(
-                statusMessage,
-                key: const Key('database-startup-status'),
-                style: TextStyle(
-                  color: Theme.of(shellContext).colorScheme.primary,
-                ),
-              ),
-            if (_errorMessage case final errorMessage?)
-              Text(
-                errorMessage,
-                key: const Key('database-passphrase-error'),
-                style: TextStyle(
-                  color: Theme.of(shellContext).colorScheme.error,
-                ),
-              ),
-          ],
+          ),
         ),
       ),
       overlayBuilder: (_) => _RestoreOverlay(

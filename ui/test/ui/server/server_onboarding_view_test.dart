@@ -1287,6 +1287,59 @@ void main() {
     expect(notifier.setupCalls, 0);
   });
 
+  testWidgets('passphrase fields stay enabled while enrollment runs', (
+    tester,
+  ) async {
+    final enrollment = Completer<EnrollmentResult>();
+    final notifier = _FakeServerNotifier(
+      checkResult: _successfulCheckResult(),
+      setupResult: const <String, dynamic>{'status': 'success'},
+    );
+    await _pumpOnboarding(
+      tester,
+      serverNotifier: notifier,
+      onEnrollmentRequired: (draft, result, passphrase) => enrollment.future,
+    );
+
+    await _fillCredentialForm(tester);
+    await tester.tap(find.byKey(const Key('server-check-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('server-save-button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('database-passphrase-field')),
+      'topsecret',
+    );
+    await tester.enterText(
+      find.byKey(const Key('database-confirm-passphrase-field')),
+      'topsecret',
+    );
+    await tester.tap(find.byKey(const Key('enrollment-submit-button')));
+    await tester.pump();
+
+    // Toggling `enabled` on a focused secure field recreates its macOS
+    // accessibility node and crashes the Flutter engine
+    // (flutter/flutter#151428): the fields stay enabled and input is gated
+    // with AbsorbPointer instead.
+    for (final key in [
+      const Key('database-passphrase-field'),
+      const Key('database-confirm-passphrase-field'),
+    ]) {
+      final field = tester.widget<TextFormField>(find.byKey(key));
+      expect(field.enabled, isTrue);
+      final absorbers = tester.widgetList<AbsorbPointer>(
+        find.ancestor(
+          of: find.byKey(key),
+          matching: find.byType(AbsorbPointer),
+        ),
+      );
+      expect(absorbers.any((absorber) => absorber.absorbing), isTrue);
+    }
+
+    enrollment.complete(const EnrollmentResult(enrolled: true));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('the create-password modal enrolls the checked pair', (
     tester,
   ) async {
