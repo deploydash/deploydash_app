@@ -72,7 +72,7 @@ python3 flutter/tools/gn --target-dir deploydash-release-arm64 \
   flutter/shell/platform/darwin/macos:zip_macos_flutter_framework
 
 binary="out/deploydash-release-arm64/FlutterMacOS.framework/Versions/A/FlutterMacOS"
-xcrun lipo -verify_arch arm64 "${binary}"
+xcrun lipo "${binary}" -verify_arch arm64
 xcrun strip -x -S "${binary}"
 install -m 755 "${binary}" "${output}"
 shasum -a 256 "${output}"

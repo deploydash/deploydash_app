@@ -189,7 +189,7 @@ if [[ -n "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY:-}" ]]; then
     echo "Packaging the patched Flutter engine requires an arm64 app and both engine binaries." >&2
     exit 1
   fi
-  if [[ "$(xcrun lipo -archs "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}")" != arm64 ]]; then
+  if [[ "$(xcrun lipo "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}" -archs)" != arm64 ]]; then
     echo "The patched FlutterMacOS binary must be arm64." >&2
     exit 1
   fi

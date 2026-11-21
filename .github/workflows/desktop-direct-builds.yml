@@ -254,9 +254,9 @@ jobs:
         shell: bash
         run: echo "DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY=${RUNNER_TEMP}/patched-flutter-engine/FlutterMacOS" >> "${GITHUB_ENV}"
 
-      - name: Cache patched macOS Flutter engine
+      - name: Restore patched macOS Flutter engine
         id: patched-engine
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY }}
           key: macos-flutter-engine-${{ matrix.arch }}-xcode26.2-${{ hashFiles('.github/actions/setup-flutter/action.yml', 'ui/scripts/build_patched_macos_flutter_engine.sh', 'ui/scripts/patches/flutter-macos-ax-text-field.patch') }}
@@ -267,6 +267,13 @@ jobs:
         env:
           DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
         run: bash ui/scripts/build_patched_macos_flutter_engine.sh "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}"
+
+      - name: Save patched macOS Flutter engine
+        if: steps.patched-engine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY }}
+          key: ${{ steps.patched-engine.outputs.cache-primary-key }}
 
       - name: Import macOS Developer ID certificate
         shell: bash
