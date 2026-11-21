@@ -30,8 +30,6 @@ git -C "${scratch}/depot_tools" fetch --depth=1 \
   https://chromium.googlesource.com/chromium/tools/depot_tools.git \
   1b0972d3d5e5b1e78055147cb3576361e274b9ed
 git -C "${scratch}/depot_tools" checkout --detach FETCH_HEAD
-export PATH="${scratch}/depot_tools:${PATH}"
-export DEPOT_TOOLS_UPDATE=0
 
 cd "${scratch}/engine"
 git init -q
@@ -51,7 +49,9 @@ solutions = [{
 }]
 EOF
 xcodebuild -downloadComponent MetalToolchain
-gclient sync --no-history
+# Use depot_tools only for syncing dependencies. Build with the host Ninja
+# on PATH instead of depot_tools' Chromium bootstrap wrapper.
+PATH="${scratch}/depot_tools:${PATH}" DEPOT_TOOLS_UPDATE=0 gclient sync --no-history
 test "$(git rev-parse HEAD)" = "${engine_revision}"
 
 # Flutter PR #196583 at c275d4f4738ee59e19d6b153b71fd6d3042de3f8.
@@ -61,6 +61,7 @@ git apply --whitespace=error "${script_dir}/patches/flutter-macos-ax-text-field.
 # Use the arm64 release framework configuration from Flutter's
 # engine/src/flutter/ci/builders/mac_host_engine.json.
 cd engine/src
+df -h .
 python3 flutter/tools/gn --target-dir deploydash-release-arm64 \
   --mac --mac-cpu arm64 --runtime-mode release --no-lto --prebuilt-dart-sdk \
   --no-rbe --no-goma --use-glfw-swiftshader
