@@ -1461,6 +1461,11 @@ class _EnrollmentFieldsState extends State<_EnrollmentFields> {
             controller: widget.passphraseController,
             labelText: 'Passphrase',
             obscureText: _obscurePassphrase,
+            // readOnly gates keyboard edits while enrolling. Unlike
+            // `enabled`, it flips a semantics flag rather than the node
+            // type, so it cannot recreate the macOS accessibility node
+            // (see above).
+            readOnly: widget.isEnrolling,
             focusNode: widget.passphraseFocusNode,
             autofocus: true,
             textInputAction: TextInputAction.next,
@@ -1489,6 +1494,7 @@ class _EnrollmentFieldsState extends State<_EnrollmentFields> {
             controller: widget.confirmPassphraseController,
             labelText: 'Confirm passphrase',
             obscureText: _obscurePassphrase,
+            readOnly: widget.isEnrolling,
             focusNode: widget.confirmPassphraseFocusNode,
             textInputAction: TextInputAction.done,
             onChanged: (_) => widget.onChanged(),

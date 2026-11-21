@@ -443,6 +443,46 @@ void main() {
     expect(find.text('ready:correct-horse'), findsOneWidget);
   });
 
+  testWidgets('unlock validator throw stays retryable', (
+    WidgetTester tester,
+  ) async {
+    var attempts = 0;
+    await tester.pumpWidget(
+      DatabaseUnlockGate(
+        databaseExists: () async => true,
+        validatePassphrase: (passphrase) async {
+          attempts += 1;
+          if (attempts == 1) {
+            throw StateError('disk vanished');
+          }
+          return passphrase == 'correct-horse';
+        },
+        enforceBackupFormatVersion: (passphrase) async {},
+        childBuilder: (passphrase) =>
+            MaterialApp(home: Scaffold(body: Text('ready:$passphrase'))),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('database-passphrase-field')),
+      'correct-horse',
+    );
+    await tester.tap(find.byKey(const Key('database-passphrase-submit')));
+    await tester.pumpAndSettle();
+
+    // A validator throw must surface as a retryable error, not wedge the
+    // screen in its submitting state with the submit button disabled.
+    expect(find.textContaining('Couldn’t unlock the app.'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('database-passphrase-submit')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ready:correct-horse'), findsOneWidget);
+    expect(attempts, 2);
+  });
+
   testWidgets('unlock blocks an unsupported restored backup format', (
     WidgetTester tester,
   ) async {
