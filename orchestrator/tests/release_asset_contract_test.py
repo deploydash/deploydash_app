@@ -1,4 +1,9 @@
+import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -42,6 +47,47 @@ class ReleaseAssetContractTest(unittest.TestCase):
         self.assertIn('"${CONTRACTS_SCRIPT}" macos-dmg-name', rebuild_script)
         self.assertIn("`-x64.dmg`", release_docs)
         self.assertIn("`-arm64.dmg`", release_docs)
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires POSIX Bash")
+    def test_macos_dmg_passes_release_version_without_optional_dart_defines(self):
+        root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = Path(temp)
+            scripts = fixture / "ui/scripts"
+            scripts.mkdir(parents=True)
+            (scripts / "lib").symlink_to(root / "ui/scripts/lib", target_is_directory=True)
+            build_script = scripts / "build_macos_dmg.sh"
+            build_script.symlink_to(root / "ui/scripts/build_macos_dmg.sh")
+            tools = fixture / "bin"
+            tools.mkdir()
+            for name, body in (
+                ("hdiutil", "exit 42"),
+                ("flutter", 'printf "%s\\n" "$@"; exit 23'),
+            ):
+                executable = tools / name
+                executable.write_text(f"#!/usr/bin/env bash\n{body}\n")
+                executable.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+                "DEPLOYDASH_ORCHESTRATOR_ROOT": str(root / "orchestrator"),
+                "ORCHESTRATOR_VENV_PYTHON": sys.executable,
+                "DEPLOYDASH_MACOS_APP_SIGN_IDENTITY": "unused test identity",
+                "DEPLOYDASH_BUILD_NAME": "1.2.0",
+                "DEPLOYDASH_BUILD_NUMBER": "100008",
+            }
+            env.pop("DEPLOYDASH_DART_DEFINES_FILE", None)
+            command = ["bash", str(build_script), "--package-only"]
+            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 23, result.stderr)
+            self.assertIn("--build-name=1.2.0", result.stdout.splitlines())
+            self.assertIn("--build-number=100008", result.stdout.splitlines())
+
+            env["DEPLOYDASH_DART_DEFINES_FILE"] = "missing.json"
+            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("DEPLOYDASH_DART_DEFINES_FILE does not exist", result.stderr)
+            self.assertNotIn("--build-name", result.stdout)
 
     def test_windows_submission_archives_are_not_customer_downloads(self):
         """Submission-only Windows archives must never become website installers."""
