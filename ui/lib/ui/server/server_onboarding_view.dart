@@ -1295,6 +1295,12 @@ class _EnrollmentDialogState extends State<_EnrollmentDialog> {
   }
 
   Future<void> _submitEnrollment() async {
+    // The passphrase fields stay enabled while enrollment runs (see
+    // _EnrollmentFieldsState), so a keyboard submit can still reach here
+    // mid-flight: ignore it rather than enrolling twice.
+    if (_isSubmitting) {
+      return;
+    }
     final passphrase = _passphraseController.text.trim();
     final confirm = _confirmPassphraseController.text.trim();
     if (passphrase.isEmpty) {
@@ -1439,62 +1445,71 @@ class _EnrollmentFieldsState extends State<_EnrollmentFields> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        AppTextFormField(
-          fieldKey: const Key('database-passphrase-field'),
-          controller: widget.passphraseController,
-          labelText: 'Passphrase',
-          obscureText: _obscurePassphrase,
-          enabled: !widget.isEnrolling,
-          focusNode: widget.passphraseFocusNode,
-          autofocus: true,
-          textInputAction: TextInputAction.next,
-          onChanged: (_) => widget.onChanged(),
-          onFieldSubmitted: (_) =>
-              widget.confirmPassphraseFocusNode.requestFocus(),
-          suffixIcon: IconButton(
-            key: const Key('database-passphrase-visibility'),
-            tooltip: _obscurePassphrase ? 'Show passphrase' : 'Hide passphrase',
-            onPressed: () => setState(() {
-              _obscurePassphrase = !_obscurePassphrase;
-            }),
-            icon: Icon(
-              _obscurePassphrase ? Icons.visibility : Icons.visibility_off,
-              semanticLabel: _obscurePassphrase
+    // The passphrase fields stay enabled for their whole lifetime, even
+    // while enrollment runs: toggling `enabled` on a focused secure field
+    // recreates its macOS accessibility node, which crashes the Flutter
+    // engine (AXPlatformNodeCocoa startEditing, flutter/flutter#151428).
+    // Input is gated with AbsorbPointer instead, which never touches the
+    // semantics tree.
+    return AbsorbPointer(
+      absorbing: widget.isEnrolling,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppTextFormField(
+            fieldKey: const Key('database-passphrase-field'),
+            controller: widget.passphraseController,
+            labelText: 'Passphrase',
+            obscureText: _obscurePassphrase,
+            focusNode: widget.passphraseFocusNode,
+            autofocus: true,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) => widget.onChanged(),
+            onFieldSubmitted: (_) =>
+                widget.confirmPassphraseFocusNode.requestFocus(),
+            suffixIcon: IconButton(
+              key: const Key('database-passphrase-visibility'),
+              tooltip: _obscurePassphrase
                   ? 'Show passphrase'
                   : 'Hide passphrase',
+              onPressed: () => setState(() {
+                _obscurePassphrase = !_obscurePassphrase;
+              }),
+              icon: Icon(
+                _obscurePassphrase ? Icons.visibility : Icons.visibility_off,
+                semanticLabel: _obscurePassphrase
+                    ? 'Show passphrase'
+                    : 'Hide passphrase',
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 12),
-        AppTextFormField(
-          fieldKey: const Key('database-confirm-passphrase-field'),
-          controller: widget.confirmPassphraseController,
-          labelText: 'Confirm passphrase',
-          obscureText: _obscurePassphrase,
-          enabled: !widget.isEnrolling,
-          focusNode: widget.confirmPassphraseFocusNode,
-          textInputAction: TextInputAction.done,
-          onChanged: (_) => widget.onChanged(),
-          onFieldSubmitted: (_) => widget.onSubmit(),
-        ),
-        if (widget.enrollmentError case final error?)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              error,
-              key: const Key('database-passphrase-error'),
-              style: TextStyle(color: theme.colorScheme.error),
+          const SizedBox(height: 12),
+          AppTextFormField(
+            fieldKey: const Key('database-confirm-passphrase-field'),
+            controller: widget.confirmPassphraseController,
+            labelText: 'Confirm passphrase',
+            obscureText: _obscurePassphrase,
+            focusNode: widget.confirmPassphraseFocusNode,
+            textInputAction: TextInputAction.done,
+            onChanged: (_) => widget.onChanged(),
+            onFieldSubmitted: (_) => widget.onSubmit(),
+          ),
+          if (widget.enrollmentError case final error?)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                error,
+                key: const Key('database-passphrase-error'),
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
             ),
-          ),
-        if (widget.failureDetails case final details?)
-          AppTechnicalDetails(
-            key: const Key('database-creation-failure-details'),
-            child: SelectableText(details),
-          ),
-      ],
+          if (widget.failureDetails case final details?)
+            AppTechnicalDetails(
+              key: const Key('database-creation-failure-details'),
+              child: SelectableText(details),
+            ),
+        ],
+      ),
     );
   }
 }
