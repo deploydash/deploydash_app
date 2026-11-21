@@ -19,6 +19,10 @@ name: macOS slim QA (hosted)
 on:
   workflow_dispatch:
     inputs:
+      artifact-run-id:
+        description: Successful Desktop Direct Builds run on this rehearsal branch
+        required: true
+        type: string
       tag:
         description: deploydash_app draft release tag (vX.Y.Z) whose arm64 DMG to certify
         required: true
@@ -62,6 +66,7 @@ permissions:
   # "release not found" under a read-only token; drafts require push
   # access. Nothing in this workflow writes to the repository.
   contents: write
+  actions: read
 
 concurrency:
   group: qa-public-macos-slim
@@ -113,6 +118,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_TAG: ${{ inputs.tag }}
+          BUILD_RUN_ID: ${{ inputs.artifact-run-id }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_BUILD_NUMBER: ${{ inputs.build-number }}
         run: |
@@ -129,7 +135,15 @@ jobs:
             echo "tag ${tag} does not match version ${version}." >&2
             exit 1
           fi
-          sha="$(gh api "repos/deploydash/deploydash_app/commits/${tag}" --jq .sha)"
+          if [[ ! "${BUILD_RUN_ID}" =~ ^[0-9]+$ ]]; then
+            echo "A numeric build run ID is required for this rehearsal." >&2
+            exit 1
+          fi
+          run="$(gh run view "${BUILD_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json conclusion,headBranch,headSha,workflowName)"
+          sha="$(jq -er --arg branch "${GITHUB_REF_NAME}" '
+            select(.conclusion == "success" and .headBranch == $branch and .workflowName == "Desktop Direct Builds")
+            | .headSha
+          ' <<< "${run}")"
           if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "could not resolve a 40-character commit for ${tag}." >&2
             exit 1
@@ -141,28 +155,28 @@ jobs:
           {
             echo "## macOS slim E2E"
             echo ""
-            echo "- draft tag: \`${tag}\`"
+            echo "- rehearsal version tag: \`${tag}\`"
             echo "- app commit: \`${sha}\`"
             echo "- version: \`${version}\` (build ${INPUT_BUILD_NUMBER})"
             echo "- run id: \`${E2E_RUN_ID}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Download arm64 DMG from draft release
+      - name: Download arm64 DMG from successful rehearsal build
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.app.outputs.tag }}
+          BUILD_RUN_ID: ${{ inputs.artifact-run-id }}
           VERSION: ${{ steps.app.outputs.version }}
         run: |
           mkdir -p "${GITHUB_WORKSPACE}/candidate"
           rm -f "${GITHUB_WORKSPACE}"/candidate/DeployDash-*-arm64.dmg
-          gh release download "${TAG}" \
-            --repo deploydash/deploydash_app \
-            --pattern "DeployDash-*-arm64.dmg" \
+          gh run download "${BUILD_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name deploydash-macos-arm64 \
             --dir "${GITHUB_WORKSPACE}/candidate"
           dmg="$(ls -1 "${GITHUB_WORKSPACE}"/candidate/DeployDash-*-arm64.dmg 2>/dev/null | head -n1 || true)"
           if [[ -z "${dmg}" || ! -f "${dmg}" ]]; then
-            echo "No DeployDash-*-arm64.dmg on draft release ${TAG}." >&2
+            echo "No DeployDash-*-arm64.dmg in build run ${BUILD_RUN_ID}." >&2
             exit 1
           fi
           # Prefer the versioned name when several match; still accept one file.
