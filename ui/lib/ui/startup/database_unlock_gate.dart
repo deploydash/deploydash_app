@@ -297,7 +297,25 @@ class _DatabaseUnlockGateState extends State<DatabaseUnlockGate> {
       _isSubmitting = true;
     });
 
-    final isValid = await widget.validatePassphrase(passphrase);
+    final bool isValid;
+    try {
+      isValid = await widget.validatePassphrase(passphrase);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      // A validator throw must not wedge the screen in its submitting
+      // state with the submit button disabled: surface it like any other
+      // unlock failure the user can retry.
+      appAnalyticsService.trackUnlockFailed(
+        reason: UnlockFailureReason.dbCorrupt,
+      );
+      setState(() {
+        _isSubmitting = false;
+        _errorMessage = couldntMessage('unlock the app', error);
+      });
+      return;
+    }
     if (!mounted) {
       return;
     }
@@ -502,6 +520,11 @@ class _DatabaseUnlockGateState extends State<DatabaseUnlockGate> {
                   controller: _passphraseController,
                   labelText: 'Passphrase',
                   obscureText: _obscurePassphrase,
+                  // readOnly gates keyboard edits while submitting. Unlike
+                  // `enabled`, it flips a semantics flag rather than the node
+                  // type, so it cannot recreate the macOS accessibility node
+                  // (see the AbsorbPointer note above).
+                  readOnly: _isSubmitting,
                   focusNode: _passphraseFocusNode,
                   autofocus: true,
                   textInputAction: TextInputAction.done,

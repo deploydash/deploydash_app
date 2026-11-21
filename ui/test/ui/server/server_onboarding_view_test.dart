@@ -1327,6 +1327,13 @@ void main() {
     ]) {
       final field = tester.widget<TextFormField>(find.byKey(key));
       expect(field.enabled, isTrue);
+      final editable = tester.widget<EditableText>(
+        find.descendant(
+          of: find.byKey(key),
+          matching: find.byType(EditableText),
+        ),
+      );
+      expect(editable.readOnly, isTrue);
       final absorbers = tester.widgetList<AbsorbPointer>(
         find.ancestor(
           of: find.byKey(key),
