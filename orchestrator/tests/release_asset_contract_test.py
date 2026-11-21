@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -12,6 +13,31 @@ from orchestrator.release_helpers import ReleaseContractError, windows_store_art
 
 class ReleaseAssetContractTest(unittest.TestCase):
     """Keeps website download suffixes synchronized with release outputs."""
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires POSIX Bash")
+    def test_release_builds_advance_past_the_published_sparkle_build(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/release.yml").read_text()
+        step = workflow.split("id: resolve\n", 1)[1].split("\n      - name:", 1)[0]
+        script = textwrap.dedent(step.split("run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as temp:
+            for run, expected in (("8", "100008"), ("9", "100009")):
+                with self.subTest(run=run):
+                    output = Path(temp) / run
+                    result = subprocess.run(
+                        ["bash", "-e", "-c", script],
+                        env={
+                            "EVENT_NAME": "push",
+                            "GITHUB_REF_NAME": "v1.2.0",
+                            "GITHUB_RUN_NUMBER": run,
+                            "GITHUB_OUTPUT": str(output),
+                        },
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("build_name=1.2.0", output.read_text().splitlines())
+                    self.assertIn(f"build_number={expected}", output.read_text().splitlines())
 
     def test_linux_release_builds_both_architectures_with_stable_artifact_names(self):
         """The website can resolve Linux x64 and arm64 only if both are built distinctly."""

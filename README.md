@@ -70,9 +70,9 @@ cd ui && flutter analyze && flutter test
 cd orchestrator && uv run python -m unittest discover -s tests -p '*_test.py'
 ```
 
-Releases are cut from version tags (`vX.Y.Z`). The tag is the single source
-of truth for the release version; the build number is the release
-workflow's run number. A tag runs the suites, builds all platforms, stages
+Releases are cut from version tags (`vX.Y.Z`). The tag determines the release
+version. The build number is 100000 plus the release workflow's run number.
+A tag runs the suites, builds all platforms, stages
 a draft release, and hands it to the quality assurance test suite
 (detailed below); the draft flips to published only after QA reports
 success.
