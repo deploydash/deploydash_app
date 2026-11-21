@@ -56,6 +56,8 @@ Optional environment overrides:
   DEPLOYDASH_MACOS_NOTARY_PROFILE or MACOS_NOTARY_PROFILE
     Name of the notarytool Keychain profile. Defaults to deploydash-notary
     unless direct Apple notarization credentials are supplied.
+  DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY
+    Path to the patched arm64 FlutterMacOS binary to package and sign.
 EOF
 }
 
@@ -179,6 +181,22 @@ APP_BUNDLE="$(
   "${PYTHON_EXE}" "${CONTRACTS_SCRIPT}" locate-macos-app-bundle \
     --release-dir "${APP_DIR}/build/macos/Build/Products/Release"
 )"
+
+if [[ -n "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY:-}" ]]; then
+  engine_binary="${APP_BUNDLE}/Contents/Frameworks/FlutterMacOS.framework/Versions/A/FlutterMacOS"
+  if [[ "${MACOS_ARCH}" != arm64 || ! -f "${engine_binary}" ||
+        ! -f "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}" ]]; then
+    echo "Packaging the patched Flutter engine requires an arm64 app and both engine binaries." >&2
+    exit 1
+  fi
+  if [[ "$(xcrun lipo -archs "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}")" != arm64 ]]; then
+    echo "The patched FlutterMacOS binary must be arm64." >&2
+    exit 1
+  fi
+  install -m 755 "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}" "${engine_binary}"
+  echo "Patched FlutterMacOS SHA-256 before signing:"
+  shasum -a 256 "${engine_binary}"
+fi
 
 SPARKLE_FRAMEWORK="${APP_BUNDLE}/Contents/Frameworks/Sparkle.framework"
 if [[ ! -d "${SPARKLE_FRAMEWORK}" ]]; then

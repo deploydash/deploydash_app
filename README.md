@@ -53,6 +53,14 @@ Signed and notarized artifacts need the release credentials: a Developer ID
 identity plus a `notarytool` Keychain profile for macOS (drop
 `--package-only`), and `DEPLOYDASH_WINDOWS_SIGN_CERT_SHA1` for Windows.
 
+The hosted arm64 DMG build compiles the Flutter 3.50.0 macOS engine with
+[Flutter PR #196583](https://github.com/flutter/flutter/pull/196583) to
+prevent a crash during accessible text editing. The packaging script installs
+the patched engine before signing. To use it on a local Apple Silicon Mac, run
+`bash scripts/build_patched_macos_flutter_engine.sh /absolute/path/to/FlutterMacOS`
+from `ui/` with Flutter 3.50.0 and Xcode 26.2, and set
+`DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY` to that path when building the DMG.
+
 ## Tests
 
 Every pull request and push to `main` runs the full Dart and Python suites:

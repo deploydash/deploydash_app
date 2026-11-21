@@ -191,9 +191,6 @@ jobs:
             dmg_arch: arm64
     runs-on: macos-15
     env:
-      DEPLOYDASH_APPLE_ID: ${{ secrets.DEPLOYDASH_APPLE_ID }}
-      DEPLOYDASH_APPLE_TEAM_ID: ${{ secrets.DEPLOYDASH_APPLE_TEAM_ID }}
-      DEPLOYDASH_APPLE_APP_PASSWORD: ${{ secrets.DEPLOYDASH_APPLE_APP_PASSWORD }}
       DEPLOYDASH_MACOS_ARCH: ${{ matrix.dmg_arch }}
     steps:
       - uses: actions/checkout@v5
@@ -233,14 +230,52 @@ jobs:
           fi
           echo "$(dirname "${uv_python}")" >> "${GITHUB_PATH}"
 
+      - name: Resolve build metadata
+        shell: bash
+        env:
+          INPUT_BUILD_NAME: ${{ inputs.build_name }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          BACKEND_ROOT="${DEPLOYDASH_ORCHESTRATOR_ROOT:-orchestrator}"
+          python3 "${BACKEND_ROOT}/scripts/resolve_build_metadata.py"
+
+      - name: Require resolved build version
+        shell: bash
+        run: |
+          if [[ -z "${DEPLOYDASH_BUILD_NAME:-}" ]]; then
+            echo "macos-dmg needs inputs.build_name on branch dispatch (tags resolve from the ref); build_macos_dmg.sh refuses unversioned production DMGs." >&2
+            exit 1
+          fi
+
       - name: Set up Flutter
         uses: ./.github/actions/setup-flutter
+
+      - name: Set patched Flutter engine path
+        shell: bash
+        run: echo "DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY=${RUNNER_TEMP}/patched-flutter-engine/FlutterMacOS" >> "${GITHUB_ENV}"
+
+      - name: Cache patched macOS Flutter engine
+        id: patched-engine
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY }}
+          key: macos-flutter-engine-${{ matrix.arch }}-xcode26.2-${{ hashFiles('.github/actions/setup-flutter/action.yml', 'ui/scripts/build_patched_macos_flutter_engine.sh', 'ui/scripts/patches/flutter-macos-ax-text-field.patch') }}
+
+      - name: Build patched macOS Flutter engine
+        if: steps.patched-engine.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+        run: bash ui/scripts/build_patched_macos_flutter_engine.sh "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}"
 
       - name: Import macOS Developer ID certificate
         shell: bash
         env:
           SIGNING_P12_BASE64: ${{ secrets.DEPLOYDASH_MACOS_SIGN_CERT_P12_BASE64 }}
           SIGNING_P12_PASSWORD: ${{ secrets.DEPLOYDASH_MACOS_SIGN_CERT_P12_PASSWORD }}
+          DEPLOYDASH_APPLE_ID: ${{ secrets.DEPLOYDASH_APPLE_ID }}
+          DEPLOYDASH_APPLE_TEAM_ID: ${{ secrets.DEPLOYDASH_APPLE_TEAM_ID }}
+          DEPLOYDASH_APPLE_APP_PASSWORD: ${{ secrets.DEPLOYDASH_APPLE_APP_PASSWORD }}
         run: |
           if [[ -z "${SIGNING_P12_BASE64}" || -z "${SIGNING_P12_PASSWORD}" ]]; then
             echo "The macOS signing certificate secrets are required." >&2
@@ -294,23 +329,6 @@ jobs:
           security list-keychains -d user -s "${KEYCHAIN_PATH}" "${existing_keychains[@]}"
           security find-identity -v -p codesigning
 
-      - name: Resolve build metadata
-        shell: bash
-        env:
-          INPUT_BUILD_NAME: ${{ inputs.build_name }}
-          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
-        run: |
-          BACKEND_ROOT="${DEPLOYDASH_ORCHESTRATOR_ROOT:-orchestrator}"
-          python3 "${BACKEND_ROOT}/scripts/resolve_build_metadata.py"
-
-      - name: Require resolved build version
-        shell: bash
-        run: |
-          if [[ -z "${DEPLOYDASH_BUILD_NAME:-}" ]]; then
-            echo "macos-dmg needs inputs.build_name on branch dispatch (tags resolve from the ref); build_macos_dmg.sh refuses unversioned production DMGs." >&2
-            exit 1
-          fi
-
       - name: Create optional CI Dart defines
         uses: ./.github/actions/ci-dart-defines
         with:
@@ -322,6 +340,10 @@ jobs:
 
       - name: Build signed, notarized, and stapled macOS DMG
         shell: bash
+        env:
+          DEPLOYDASH_APPLE_ID: ${{ secrets.DEPLOYDASH_APPLE_ID }}
+          DEPLOYDASH_APPLE_TEAM_ID: ${{ secrets.DEPLOYDASH_APPLE_TEAM_ID }}
+          DEPLOYDASH_APPLE_APP_PASSWORD: ${{ secrets.DEPLOYDASH_APPLE_APP_PASSWORD }}
         run: |
           cd ui
           flutter config --enable-macos-desktop

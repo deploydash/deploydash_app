@@ -14,6 +14,7 @@ for shell_script in \
   "${APP_DIR}/scripts/build_flatpak.sh" \
   "${APP_DIR}/scripts/build_macos_app_store.sh" \
   "${APP_DIR}/scripts/build_macos_dmg.sh" \
+  "${APP_DIR}/scripts/build_patched_macos_flutter_engine.sh" \
   "${APP_DIR}/scripts/build_snap.sh" \
   "${APP_DIR}/scripts/desktop_updates_coverage.sh" \
   "${APP_DIR}/scripts/notarize_macos_dmg.sh" \
