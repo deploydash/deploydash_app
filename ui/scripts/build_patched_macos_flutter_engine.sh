@@ -9,18 +9,26 @@ if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
   echo "The patched FlutterMacOS engine must be built on an Apple Silicon Mac." >&2
   exit 1
 fi
+if ! flutter_bin="$(command -v flutter)"; then
+  echo "Flutter is required on PATH to build the patched macOS engine." >&2
+  exit 1
+fi
+if ! host_ninja="$(command -v ninja)"; then
+  echo "Ninja is required on PATH to build the patched macOS engine." >&2
+  exit 1
+fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-output_dir="$(dirname "$1")"
-mkdir -p "${output_dir}"
-output="$(cd "${output_dir}" && pwd)/$(basename "$1")"
-flutter_sdk="$(cd "$(dirname "$(command -v flutter)")/.." && pwd)"
-host_ninja="$(command -v ninja)"
+flutter_sdk="$(cd "$(dirname "${flutter_bin}")/.." && pwd)"
 engine_revision="371f77202a73e8dff57a8b3bff75bca55c090aee"
 if [[ "$(cat "${flutter_sdk}/bin/internal/engine.version")" != "${engine_revision}" ]]; then
   echo "Review Flutter PR #196583 before using this patch with a different engine revision." >&2
   exit 1
 fi
+
+output_dir="$(dirname "$1")"
+mkdir -p "${output_dir}"
+output="$(cd "${output_dir}" && pwd)/$(basename "$1")"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/deploydash-flutter-engine.XXXXXX")"
 trap 'rm -rf "${scratch}"' EXIT
@@ -36,6 +44,7 @@ export DEPOT_TOOLS_UPDATE=0
 
 cd "${scratch}/engine"
 git init -q
+# Flutter 3.50 keeps engine/src and its root DEPS in the Flutter monorepo.
 git remote add origin https://github.com/flutter/flutter.git
 git fetch --depth=1 origin "${engine_revision}"
 git checkout --detach FETCH_HEAD

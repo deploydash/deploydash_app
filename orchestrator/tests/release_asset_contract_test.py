@@ -75,6 +75,34 @@ class ReleaseAssetContractTest(unittest.TestCase):
         self.assertIn("`-arm64.dmg`", release_docs)
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires POSIX Bash")
+    def test_patched_macos_engine_reports_missing_build_tools_before_creating_output(self):
+        root = Path(__file__).resolve().parents[2]
+        script = root / "ui/scripts/build_patched_macos_flutter_engine.sh"
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = Path(temp)
+            tools = fixture / "bin"
+            tools.mkdir()
+            for command_name in ("dirname", "basename", "mkdir", "cat"):
+                (tools / command_name).symlink_to(shutil.which(command_name))
+            uname = tools / "uname"
+            uname.write_text('#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac\n')
+            uname.chmod(0o755)
+            output = fixture / "output/FlutterMacOS"
+            command = [shutil.which("bash"), str(script), str(output)]
+            for missing_tool in ("Flutter", "Ninja"):
+                with self.subTest(missing_tool=missing_tool):
+                    if missing_tool == "Ninja":
+                        flutter = tools / "flutter"
+                        flutter.write_text("#!/bin/sh\nexit 0\n")
+                        flutter.chmod(0o755)
+                    result = subprocess.run(
+                        command, env={"PATH": str(tools)}, capture_output=True, text=True
+                    )
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn(f"{missing_tool} is required on PATH", result.stderr)
+                    self.assertFalse(output.parent.exists())
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires POSIX Bash")
     def test_macos_dmg_passes_release_version_without_optional_dart_defines(self):
         root = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as temp:

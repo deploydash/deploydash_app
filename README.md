@@ -58,7 +58,7 @@ The hosted arm64 DMG build compiles the Flutter 3.50.0 macOS engine with
 prevent a crash during accessible text editing. The packaging script installs
 the patched engine before signing. To use it on a local Apple Silicon Mac, run
 `bash scripts/build_patched_macos_flutter_engine.sh /absolute/path/to/FlutterMacOS`
-from `ui/` with Flutter 3.50.0 and Xcode 26.2, and set
+from `ui/` with Flutter 3.50.0, Xcode 26.2, and Ninja, and set
 `DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY` to that path when building the DMG.
 
 ## Tests
