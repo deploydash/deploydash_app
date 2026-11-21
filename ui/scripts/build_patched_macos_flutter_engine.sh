@@ -15,6 +15,7 @@ output_dir="$(dirname "$1")"
 mkdir -p "${output_dir}"
 output="$(cd "${output_dir}" && pwd)/$(basename "$1")"
 flutter_sdk="$(cd "$(dirname "$(command -v flutter)")/.." && pwd)"
+host_ninja="$(command -v ninja)"
 engine_revision="371f77202a73e8dff57a8b3bff75bca55c090aee"
 if [[ "$(cat "${flutter_sdk}/bin/internal/engine.version")" != "${engine_revision}" ]]; then
   echo "Review Flutter PR #196583 before using this patch with a different engine revision." >&2
@@ -30,6 +31,8 @@ git -C "${scratch}/depot_tools" fetch --depth=1 \
   https://chromium.googlesource.com/chromium/tools/depot_tools.git \
   1b0972d3d5e5b1e78055147cb3576361e274b9ed
 git -C "${scratch}/depot_tools" checkout --detach FETCH_HEAD
+export PATH="${scratch}/depot_tools:${PATH}"
+export DEPOT_TOOLS_UPDATE=0
 
 cd "${scratch}/engine"
 git init -q
@@ -49,9 +52,7 @@ solutions = [{
 }]
 EOF
 xcodebuild -downloadComponent MetalToolchain
-# Use depot_tools only for syncing dependencies. Build with the host Ninja
-# on PATH instead of depot_tools' Chromium bootstrap wrapper.
-PATH="${scratch}/depot_tools:${PATH}" DEPOT_TOOLS_UPDATE=0 gclient sync --no-history
+gclient sync --no-history
 test "$(git rev-parse HEAD)" = "${engine_revision}"
 
 # Flutter PR #196583 at c275d4f4738ee59e19d6b153b71fd6d3042de3f8.
@@ -65,7 +66,10 @@ df -h .
 python3 flutter/tools/gn --target-dir deploydash-release-arm64 \
   --mac --mac-cpu arm64 --runtime-mode release --no-lto --prebuilt-dart-sdk \
   --no-rbe --no-goma --use-glfw-swiftshader
-ninja -C out/deploydash-release-arm64 -j 3 flutter/shell/platform/darwin/macos:zip_macos_flutter_framework
+# GN uses vpython3 from depot_tools. Invoke the host Ninja by its absolute
+# path to avoid depot_tools' Chromium Ninja wrapper.
+"${host_ninja}" -C out/deploydash-release-arm64 -j 3 \
+  flutter/shell/platform/darwin/macos:zip_macos_flutter_framework
 
 binary="out/deploydash-release-arm64/FlutterMacOS.framework/Versions/A/FlutterMacOS"
 xcrun lipo -verify_arch arm64 "${binary}"
