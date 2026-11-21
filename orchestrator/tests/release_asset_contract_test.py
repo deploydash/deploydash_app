@@ -1,4 +1,10 @@
+import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -7,6 +13,31 @@ from orchestrator.release_helpers import ReleaseContractError, windows_store_art
 
 class ReleaseAssetContractTest(unittest.TestCase):
     """Keeps website download suffixes synchronized with release outputs."""
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires POSIX Bash")
+    def test_release_builds_advance_past_the_published_sparkle_build(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/release.yml").read_text()
+        step = workflow.split("id: resolve\n", 1)[1].split("\n      - name:", 1)[0]
+        script = textwrap.dedent(step.split("run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as temp:
+            for run, expected in (("8", "100008"), ("9", "100009")):
+                with self.subTest(run=run):
+                    output = Path(temp) / run
+                    result = subprocess.run(
+                        ["bash", "-e", "-c", script],
+                        env={
+                            "EVENT_NAME": "push",
+                            "GITHUB_REF_NAME": "v1.2.0",
+                            "GITHUB_RUN_NUMBER": run,
+                            "GITHUB_OUTPUT": str(output),
+                        },
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("build_name=1.2.0", output.read_text().splitlines())
+                    self.assertIn(f"build_number={expected}", output.read_text().splitlines())
 
     def test_linux_release_builds_both_architectures_with_stable_artifact_names(self):
         """The website can resolve Linux x64 and arm64 only if both are built distinctly."""
@@ -42,6 +73,75 @@ class ReleaseAssetContractTest(unittest.TestCase):
         self.assertIn('"${CONTRACTS_SCRIPT}" macos-dmg-name', rebuild_script)
         self.assertIn("`-x64.dmg`", release_docs)
         self.assertIn("`-arm64.dmg`", release_docs)
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires POSIX Bash")
+    def test_patched_macos_engine_reports_missing_build_tools_before_creating_output(self):
+        root = Path(__file__).resolve().parents[2]
+        script = root / "ui/scripts/build_patched_macos_flutter_engine.sh"
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = Path(temp)
+            tools = fixture / "bin"
+            tools.mkdir()
+            for command_name in ("dirname", "basename", "mkdir", "cat"):
+                (tools / command_name).symlink_to(shutil.which(command_name))
+            uname = tools / "uname"
+            uname.write_text('#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac\n')
+            uname.chmod(0o755)
+            output = fixture / "output/FlutterMacOS"
+            command = [shutil.which("bash"), str(script), str(output)]
+            for missing_tool in ("Flutter", "Ninja"):
+                with self.subTest(missing_tool=missing_tool):
+                    if missing_tool == "Ninja":
+                        flutter = tools / "flutter"
+                        flutter.write_text("#!/bin/sh\nexit 0\n")
+                        flutter.chmod(0o755)
+                    result = subprocess.run(
+                        command, env={"PATH": str(tools)}, capture_output=True, text=True
+                    )
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn(f"{missing_tool} is required on PATH", result.stderr)
+                    self.assertFalse(output.parent.exists())
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires POSIX Bash")
+    def test_macos_dmg_passes_release_version_without_optional_dart_defines(self):
+        root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = Path(temp)
+            scripts = fixture / "ui/scripts"
+            scripts.mkdir(parents=True)
+            (scripts / "lib").symlink_to(root / "ui/scripts/lib", target_is_directory=True)
+            build_script = scripts / "build_macos_dmg.sh"
+            build_script.symlink_to(root / "ui/scripts/build_macos_dmg.sh")
+            tools = fixture / "bin"
+            tools.mkdir()
+            for name, body in (
+                ("hdiutil", "exit 42"),
+                ("flutter", 'printf "%s\\n" "$@"; exit 23'),
+            ):
+                executable = tools / name
+                executable.write_text(f"#!/usr/bin/env bash\n{body}\n")
+                executable.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+                "DEPLOYDASH_ORCHESTRATOR_ROOT": str(root / "orchestrator"),
+                "ORCHESTRATOR_VENV_PYTHON": sys.executable,
+                "DEPLOYDASH_MACOS_APP_SIGN_IDENTITY": "unused test identity",
+                "DEPLOYDASH_BUILD_NAME": "1.2.0",
+                "DEPLOYDASH_BUILD_NUMBER": "100008",
+            }
+            env.pop("DEPLOYDASH_DART_DEFINES_FILE", None)
+            command = ["bash", str(build_script), "--package-only"]
+            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 23, result.stderr)
+            self.assertIn("--build-name=1.2.0", result.stdout.splitlines())
+            self.assertIn("--build-number=100008", result.stdout.splitlines())
+
+            env["DEPLOYDASH_DART_DEFINES_FILE"] = "missing.json"
+            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("DEPLOYDASH_DART_DEFINES_FILE does not exist", result.stderr)
+            self.assertNotIn("--build-name", result.stdout)
 
     def test_windows_submission_archives_are_not_customer_downloads(self):
         """Submission-only Windows archives must never become website installers."""

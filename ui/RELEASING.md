@@ -413,9 +413,10 @@ mapping, privacy boundary, and key-rotation rules live in
 
 For every release:
 
-1. Push a `vX.Y.Z` tag. The tag is the version; the workflow run number
-   is the build number. Never hand-pick either, and never reuse a
-   Windows Store `X.Y.Z.0` version.
+1. Push a `vX.Y.Z` tag. The tag determines the version. The release workflow
+   adds 100000 to its run number so builds advance beyond the legacy Sparkle
+   build. The Windows Store package uses the tag version formatted as
+   `X.Y.Z.0`.
 2. Build, sign, and verify every target artifact (CI does this; the
    Ubuntu and macOS legs each attach their arch's versioned package to
    the draft).

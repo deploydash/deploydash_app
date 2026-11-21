@@ -11,7 +11,10 @@ SKIP_BUILD=0
 PACKAGE_ONLY=0
 APP_SIGN_IDENTITY="${DEPLOYDASH_MACOS_APP_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${DEPLOYDASH_MACOS_NOTARY_PROFILE:-${MACOS_NOTARY_PROFILE:-}}"
-DART_DEFINES_FILE="${DEPLOYDASH_DART_DEFINES_FILE:-config/dart-defines.local.json}"
+DART_DEFINES_FILE="${DEPLOYDASH_DART_DEFINES_FILE:-}"
+if [[ -z "${DEPLOYDASH_DART_DEFINES_FILE+x}" && -f "${APP_DIR}/config/dart-defines.local.json" ]]; then
+  DART_DEFINES_FILE="${APP_DIR}/config/dart-defines.local.json"
+fi
 BUILD_NAME="${DEPLOYDASH_BUILD_NAME:-}"
 BUILD_NUMBER="${DEPLOYDASH_BUILD_NUMBER:-}"
 PYTHON_EXE="${ORCHESTRATOR_VENV_PYTHON:-${DEPLOYDASH_ENGINE_VENV_PYTHON:-}}"
@@ -56,6 +59,8 @@ Optional environment overrides:
   DEPLOYDASH_MACOS_NOTARY_PROFILE or MACOS_NOTARY_PROFILE
     Name of the notarytool Keychain profile. Defaults to deploydash-notary
     unless direct Apple notarization credentials are supplied.
+  DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY
+    Path to the patched arm64 FlutterMacOS binary to package and sign.
 EOF
 }
 
@@ -150,16 +155,17 @@ fi
 echo "Using macOS app signing identity: ${APP_SIGN_IDENTITY}"
 
 if [[ "${SKIP_BUILD}" -eq 0 ]]; then
-  FLUTTER_BUILD_ARGS=()
-  while IFS= read -r line; do
-    [[ -n "${line}" ]] && FLUTTER_BUILD_ARGS+=("${line}")
-  done < <(
+  flutter_build_args="$(
     "${PYTHON_EXE}" "${CONTRACTS_SCRIPT}" flutter-build-args \
       --app-dir "${APP_DIR}" \
       --dart-defines-file "${DART_DEFINES_FILE}" \
       --build-name "${BUILD_NAME}" \
       --build-number "${BUILD_NUMBER}"
-  )
+  )"
+  FLUTTER_BUILD_ARGS=()
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] && FLUTTER_BUILD_ARGS+=("${line}")
+  done <<< "${flutter_build_args}"
   FLUTTER_BUILD_ARGS+=(
     --dart-define=DEPLOYDASH_DISTRIBUTION=dmg
     --dart-define=DEPLOYDASH_RELEASE_CHANNEL=stable
@@ -180,12 +186,39 @@ APP_BUNDLE="$(
     --release-dir "${APP_DIR}/build/macos/Build/Products/Release"
 )"
 
+INFO_PLIST="${APP_BUNDLE}/Contents/Info.plist"
+if [[ -n "${BUILD_NAME}" &&
+      "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${INFO_PLIST}")" != "${BUILD_NAME}" ]]; then
+  echo "The macOS app version does not match ${BUILD_NAME}." >&2
+  exit 1
+fi
+if [[ -n "${BUILD_NUMBER}" &&
+      "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${INFO_PLIST}")" != "${BUILD_NUMBER}" ]]; then
+  echo "The macOS app build number does not match ${BUILD_NUMBER}." >&2
+  exit 1
+fi
+
+if [[ -n "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY:-}" ]]; then
+  engine_binary="${APP_BUNDLE}/Contents/Frameworks/FlutterMacOS.framework/Versions/A/FlutterMacOS"
+  if [[ "${MACOS_ARCH}" != arm64 || ! -f "${engine_binary}" ||
+        ! -f "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}" ]]; then
+    echo "Packaging the patched Flutter engine requires an arm64 app and both engine binaries." >&2
+    exit 1
+  fi
+  if [[ "$(xcrun lipo "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}" -archs)" != arm64 ]]; then
+    echo "The patched FlutterMacOS binary must be arm64." >&2
+    exit 1
+  fi
+  install -m 755 "${DEPLOYDASH_MACOS_FLUTTER_ENGINE_BINARY}" "${engine_binary}"
+  echo "Patched FlutterMacOS SHA-256 before signing:"
+  shasum -a 256 "${engine_binary}"
+fi
+
 SPARKLE_FRAMEWORK="${APP_BUNDLE}/Contents/Frameworks/Sparkle.framework"
 if [[ ! -d "${SPARKLE_FRAMEWORK}" ]]; then
   echo "Direct macOS build is missing the pinned Sparkle framework." >&2
   exit 1
 fi
-INFO_PLIST="${APP_BUNDLE}/Contents/Info.plist"
 set_plist_value() {
   local key="$1"
   local type="$2"

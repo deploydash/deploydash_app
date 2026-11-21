@@ -3,8 +3,8 @@ name: Release
 # Tag-ground-truth release pipeline.
 #
 # 1. Maintainer pushes a tag `vX.Y.Z`. The tag is the single source of
-#    truth for the release version; the build number is this workflow's
-#    run number (monotonic per repository, never reused).
+#    truth for the release version. The build number is 100000 plus
+#    this workflow's run number.
 # 2. `tests` runs the full Dart and Python suites. Nothing builds unless
 #    they pass.
 # 3. `builds` produces every platform artifact and attaches it to a DRAFT
@@ -91,7 +91,8 @@ jobs:
             exit 1
           fi
           echo "build_name=${tag#v}" >> "${GITHUB_OUTPUT}"
-          echo "build_number=${GITHUB_RUN_NUMBER}" >> "${GITHUB_OUTPUT}"
+          # The published macOS Sparkle feed already uses build 100000.
+          echo "build_number=$((100000 + GITHUB_RUN_NUMBER))" >> "${GITHUB_OUTPUT}"
           # Dual-line default: tag pushes run Windows + macOS end to end
           # while the Linux legs stay parked (no Linux QA gate yet).
           # Dispatch with windows_only=true to rehearse the Windows line

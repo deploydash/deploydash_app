@@ -14,6 +14,7 @@ for shell_script in \
   "${APP_DIR}/scripts/build_flatpak.sh" \
   "${APP_DIR}/scripts/build_macos_app_store.sh" \
   "${APP_DIR}/scripts/build_macos_dmg.sh" \
+  "${APP_DIR}/scripts/build_patched_macos_flutter_engine.sh" \
   "${APP_DIR}/scripts/build_snap.sh" \
   "${APP_DIR}/scripts/desktop_updates_coverage.sh" \
   "${APP_DIR}/scripts/notarize_macos_dmg.sh" \
@@ -92,9 +93,6 @@ grep -q 'REPO_ROOT=.*APP_DIR' "${APP_DIR}/scripts/verify_macos_hardened_runtime.
 grep -q 'REPO_ROOT=.*APP_DIR' "${APP_DIR}/scripts/reinstall_deb.sh"
 grep -q 'DEPLOYDASH_MACOS_APP_SIGN_IDENTITY' "${APP_DIR}/scripts/build_macos_dmg.sh"
 grep -q 'production DMG chain requires DEPLOYDASH_BUILD_NAME' "${APP_DIR}/scripts/build_macos_dmg.sh"
-grep -Fq \
-  'DEPLOYDASH_DART_DEFINES_FILE:-config/dart-defines.local.json' \
-  "${APP_DIR}/scripts/build_macos_dmg.sh"
 grep -q 'DEPLOYDASH_MACOS_APP_SIGN_IDENTITY' "${APP_DIR}/scripts/rebuild_macos_dmg.sh"
 grep -q -- '--package-only' "${APP_DIR}/scripts/rebuild_macos_dmg.sh"
 grep -q 'DEPLOYDASH_MACOS_NOTARY_PROFILE=deploydash-notary' "${APP_DIR}/scripts/build_macos_dmg.sh"

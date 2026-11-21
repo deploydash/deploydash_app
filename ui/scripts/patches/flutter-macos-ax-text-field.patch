@@ -1,0 +1,90 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/macos/framework/Source/AccessibilityBridgeMac.mm b/engine/src/flutter/shell/platform/darwin/macos/framework/Source/AccessibilityBridgeMac.mm
+index b47b8be4d1cb8..176787504d622 100644
+--- a/engine/src/flutter/shell/platform/darwin/macos/framework/Source/AccessibilityBridgeMac.mm
++++ b/engine/src/flutter/shell/platform/darwin/macos/framework/Source/AccessibilityBridgeMac.mm
+@@ -166,12 +166,15 @@
+         // the FlutterTextField directly. Only need to make sure it is the
+         // first responder.
+         id native_text_field = mac_platform_node_delegate->GetNativeViewAccessible();
+-        FML_DCHECK([native_text_field isKindOfClass:FlutterTextField.class]);
+-        id focused = mac_platform_node_delegate->GetFocus();
+-        if (!focused || native_text_field == focused) {
+-          [(FlutterTextField*)native_text_field startEditing];
++        if ([native_text_field isKindOfClass:FlutterTextField.class]) {
++          id focused = mac_platform_node_delegate->GetFocus();
++          if (!focused || native_text_field == focused) {
++            [(FlutterTextField*)native_text_field startEditing];
++          }
++          break;
+         }
+-        break;
++        // A text field role does not guarantee a FlutterTextField native node.
++        // Fall back to the standard value notification for other node types.
+       }
+       events.push_back({
+           .name = NSAccessibilityValueChangedNotification,
+diff --git a/engine/src/flutter/shell/platform/darwin/macos/framework/Source/AccessibilityBridgeMacTest.mm b/engine/src/flutter/shell/platform/darwin/macos/framework/Source/AccessibilityBridgeMacTest.mm
+index 3e766034250fe..e18ec1c52d49e 100644
+--- a/engine/src/flutter/shell/platform/darwin/macos/framework/Source/AccessibilityBridgeMacTest.mm
++++ b/engine/src/flutter/shell/platform/darwin/macos/framework/Source/AccessibilityBridgeMacTest.mm
+@@ -6,6 +6,7 @@
+
+ #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterDartProject_Internal.h"
+ #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterEngine_Internal.h"
++#import "flutter/shell/platform/darwin/macos/framework/Source/FlutterTextInputSemanticsObject.h"
+ #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterViewController_Internal.h"
+ #include "flutter/testing/autoreleasepool_test.h"
+ #include "flutter/testing/testing.h"
+@@ -141,6 +142,52 @@ @implementation AccessibilityBridgeTestViewController
+   [engine shutDownEngine];
+ }
+
++TEST_F(AccessibilityBridgeMacWindowTest, TextFieldValueChangeWithNonTextFieldNativeNode) {
++  FlutterViewController* viewController = CreateTestViewController();
++  FlutterEngine* engine = viewController.engine;
++  NSWindow* window = GetWindow();
++  window.contentView = viewController.view;
++  engine.semanticsEnabled = YES;
++  auto bridge = std::static_pointer_cast<AccessibilityBridgeMacSpy>(
++      viewController.accessibilityBridge.lock());
++
++  FlutterSemanticsNode2 root{};
++  FlutterSemanticsFlags flags = FlutterSemanticsFlags{0};
++  root.id = 0;
++  root.flags2 = &flags;
++  root.text_selection_base = -1;
++  root.text_selection_extent = -1;
++  root.label = "root";
++  root.hint = "";
++  root.value = "";
++  root.increased_value = "";
++  root.decreased_value = "";
++  root.tooltip = "";
++  root.identifier = "";
++  bridge->AddFlutterSemanticsNodeUpdate(root);
++  bridge->CommitUpdates();
++  bridge->actual_notifications = [NSMutableDictionary dictionary];
++  auto delegate = bridge->GetFlutterPlatformNodeDelegateFromID(0).lock();
++  ASSERT_TRUE(delegate);
++  id native_node = delegate->GetNativeViewAccessible();
++  ASSERT_NE(native_node, nil);
++  ASSERT_FALSE([native_node isKindOfClass:[FlutterTextField class]]);
++
++  ui::AXTree tree;
++  ui::AXNode ax_node(&tree, nullptr, 0, 0);
++  ui::AXNodeData node_data;
++  node_data.id = 0;
++  node_data.role = ax::mojom::Role::kTextField;
++  ax_node.SetData(node_data);
++  std::vector<ui::AXEventIntent> intent;
++  ui::AXEventGenerator::EventParams params(ui::AXEventGenerator::Event::VALUE_CHANGED,
++                                           ax::mojom::EventFrom::kNone, intent);
++  bridge->OnAccessibilityEvent(ui::AXEventGenerator::TargetedEvent(&ax_node, params));
++
++  EXPECT_EQ(bridge->actual_notifications[NSAccessibilityValueChangedNotification], native_node);
++  [engine shutDownEngine];
++}
++
+ // Flutter used to assume that the accessibility root had ID 0.
+ // In a multi-view world, each view has its own accessibility root
+ // with a globally unique node ID.
