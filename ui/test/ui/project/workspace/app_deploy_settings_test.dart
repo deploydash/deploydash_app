@@ -16,6 +16,27 @@ void main() {
   final sqliteAvailable = ensureSqliteRuntimeAvailable();
 
   group('project workspace deployment settings', () {
+    testWidgets('A blocked deploy does not show ready status', (
+      WidgetTester tester,
+    ) async {
+      final database = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+      final project = selectedProject.copyWith(primaryDomain: '');
+      await pumpWorkspaceWithGitHubReady(
+        tester,
+        database: database,
+        project: project,
+        projectNotifier: DialogProjectNotifier(project),
+      );
+
+      expect(
+        find.text('Enter a valid domain before you deploy.'),
+        findsOneWidget,
+      );
+      expect(find.text('Ready to deploy this web app.'), findsNothing);
+      expect(find.byKey(const Key('deploy-status-message')), findsNothing);
+    }, skip: !sqliteAvailable);
+
     testWidgets('Web app env card shows keys only in read-only mode', (
       WidgetTester tester,
     ) async {

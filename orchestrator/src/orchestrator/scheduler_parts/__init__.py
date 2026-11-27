@@ -28,15 +28,17 @@ def _settings_schema(properties, required):
     }
 
 
+_WORKER_TARGET_REQUIRES_REF = {
+    "if": {
+        "properties": {"target_type": {"const": "worker"}},
+        "required": ["target_type"],
+    },
+    "then": {"required": ["target_ref"]},
+}
+
 _TASK_UPSERT_CONDITIONALS = {
     "allOf": [
-        {
-            "if": {
-                "properties": {"target_type": {"const": "worker"}},
-                "required": ["target_type"],
-            },
-            "then": {"required": ["target_ref"]},
-        },
+        _WORKER_TARGET_REQUIRES_REF,
         {
             "if": {
                 "properties": {
@@ -113,15 +115,7 @@ def _task_run_now_schema():
         },
         required=["project_slug", "task_id"],
     )
-    schema["properties"]["settings"]["allOf"] = [
-        {
-            "if": {
-                "properties": {"target_type": {"const": "worker"}},
-                "required": ["target_type"],
-            },
-            "then": {"required": ["target_ref"]},
-        },
-    ]
+    schema["properties"]["settings"]["allOf"] = [_WORKER_TARGET_REQUIRES_REF]
     return schema
 
 
@@ -133,6 +127,24 @@ def _task_status_schema():
                 "type": "array",
                 "minItems": 1,
                 "items": _TASK_ID,
+            },
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "task_id": _TASK_ID,
+                        "target_type": {
+                            "type": "string",
+                            "enum": ["web_app", "worker"],
+                        },
+                        "target_ref": _WORKER_REF,
+                        "command": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["task_id", "target_type", "command"],
+                    "allOf": [_WORKER_TARGET_REQUIRES_REF],
+                },
             },
         },
         required=["project_slug", "task_ids"],

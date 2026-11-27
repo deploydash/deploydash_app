@@ -563,8 +563,9 @@ class TestPostgresBackup(unittest.TestCase):
         filesystem_command = postgres_backup_destination_test_command(
             {"type": "filesystem", "prefix": "/var/backups/deploydash"},
         )
-        self.assertIn('cp "${TEST_FILE}"', filesystem_command["command"])
-        self.assertIn('rm -f "${TEST_FILE_PATH}"', filesystem_command["command"])
+        self.assertEqual(filesystem_command["tested_remote_path"], "/var/backups/deploydash")
+        self.assertIn('mktemp -- "${BACKUP_ROOT%/}', filesystem_command["command"])
+        self.assertIn('rm -f -- "${PROBE}"', filesystem_command["command"])
 
         apply_plan = postgres_backup_policy_apply_command(
             config,
@@ -956,9 +957,11 @@ class TestPostgresBackup(unittest.TestCase):
             plan["command"],
         )
         self.assertIn('echo "prune_failures=${PRUNE_FAILURES}" >&2', plan["command"])
+        prune_failed_at = plan["command"].index("prune_failures=${PRUNE_FAILURES}")
+        self.assertGreater(plan["command"].find("exit 1", prune_failed_at), prune_failed_at)
         self.assertLess(
-            plan["command"].index("prune_failures=${PRUNE_FAILURES}"),
-            plan["command"].index("exit 1"),
+            plan["command"].index("BACKUP_ROOT=/var/backups/deploydash"),
+            plan["command"].index('mkdir -p "${POLICY_DIR}"'),
         )
 
         # Validate emitted shell syntax

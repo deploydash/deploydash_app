@@ -87,9 +87,9 @@ extension _BackupDialogMethods on _BackupSummaryState {
                 final response = await _testBackupDestination(
                   project: project,
                   server: server,
-                  destinationType: BackupDestinationType.s3,
+                  destinationType: selectedType,
                   destinationConfig: buildBackupDestinationConfig(
-                    destinationType: BackupDestinationType.s3,
+                    destinationType: selectedType,
                     s3Prefix: s3PrefixController.text,
                     s3AccessKeyId: s3AccessKeyController.text,
                     s3SecretAccessKey: s3SecretController.text,
@@ -103,6 +103,9 @@ extension _BackupDialogMethods on _BackupSummaryState {
                   prefix: 'Backup destination test',
                   response: response,
                 );
+                if (!context.mounted) {
+                  return;
+                }
                 setState(() {
                   isTesting = false;
                   testStatusIsError = response['status'] != 'success';
@@ -114,6 +117,9 @@ extension _BackupDialogMethods on _BackupSummaryState {
                   );
                 });
               } catch (error) {
+                if (!context.mounted) {
+                  return;
+                }
                 setState(() {
                   isTesting = false;
                   testStatusIsError = true;
@@ -174,18 +180,17 @@ extension _BackupDialogMethods on _BackupSummaryState {
                   'Choose where Deploy Dash should store backups for this project.',
               maxWidth: 480,
               actions: [
-                if (selectedType == BackupDestinationType.s3)
-                  TextButton(
-                    key: const Key('backup-destination-test-button'),
-                    onPressed: isTesting ? null : testConnection,
-                    child: isTesting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Test connection'),
-                  ),
+                TextButton(
+                  key: const Key('backup-destination-test-button'),
+                  onPressed: isTesting ? null : testConnection,
+                  child: isTesting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Test connection'),
+                ),
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
                   child: const Text('Cancel'),
@@ -293,6 +298,8 @@ extension _BackupDialogMethods on _BackupSummaryState {
                       key: const Key('backup-destination-file-path-field'),
                       controller: filePrefixController,
                       labelText: 'Filesystem path',
+                      helperText:
+                          'Use an existing directory on the managed server.',
                       onChanged: (_) => clearValidationMessages(),
                     ),
                   ],
@@ -529,12 +536,15 @@ extension _BackupDialogMethods on _BackupSummaryState {
                     controller: time1Controller,
                     labelText: 'Time #1 (HH:MM)',
                   ),
-                  if (scheduleMode == 'daily_twice')
+                  if (scheduleMode == 'daily_twice') ...[
+                    const SizedBox(height: 12),
                     AppTextFormField(
                       key: const Key('backup-policy-time-two-field'),
                       controller: time2Controller,
                       labelText: 'Time #2 (HH:MM)',
                     ),
+                  ],
+                  const SizedBox(height: 12),
                   AppNumberFormField(
                     key: const Key('backup-policy-retention-field'),
                     controller: retentionController,

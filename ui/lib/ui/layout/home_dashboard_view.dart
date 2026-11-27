@@ -22,11 +22,13 @@ class DeletedProjectNotice {
   const DeletedProjectNotice({
     required this.projectName,
     required this.warnings,
+    this.retainedSqliteVolumes = const [],
     this.completed = true,
   });
 
   final String projectName;
   final List<String> warnings;
+  final List<String> retainedSqliteVolumes;
   final bool completed;
 }
 
@@ -140,28 +142,35 @@ class HomeDashboardView extends StatelessWidget {
                 onPressed: onDismissDeletedProjectNotice,
                 child: const Text('Dismiss'),
               ),
-              child: deletedNotice.warnings.isEmpty
-                  ? const Text(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (deletedNotice.retainedSqliteVolumes.isNotEmpty)
+                    SelectableText(
+                      'Deploy Dash left these SQLite Docker volumes on the server: '
+                      '${deletedNotice.retainedSqliteVolumes.join(', ')}.',
+                      key: const Key('home-delete-retained-sqlite-volumes'),
+                    ),
+                  if (deletedNotice.warnings.isEmpty &&
+                      deletedNotice.retainedSqliteVolumes.isEmpty)
+                    const Text(
                       'You are back on the Home screen. Open another project '
                       'when you are ready.',
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Remote cleanup warnings:'),
-                        const SizedBox(height: 8),
-                        for (final warning in deletedNotice.warnings)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              '- $warning',
-                              key: Key(
-                                'home-delete-warning-${warning.hashCode}',
-                              ),
-                            ),
-                          ),
-                      ],
                     ),
+                  if (deletedNotice.warnings.isNotEmpty) ...[
+                    const Text('Remote cleanup warnings:'),
+                    const SizedBox(height: 8),
+                    for (final warning in deletedNotice.warnings)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          '- $warning',
+                          key: Key('home-delete-warning-${warning.hashCode}'),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
             ),
           for (final recovery in projectDeletionRecoveries)
             _ProjectCleanupCard(

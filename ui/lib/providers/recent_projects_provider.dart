@@ -185,6 +185,7 @@ List<RecentProjectGroup> groupRecentProjectVisits(
 /// Maintains the session-stable recent project groups and raw visits in memory.
 class RecentProjectVisitsNotifier extends Notifier<List<RecentProjectGroup>> {
   bool _didInitialize = false;
+  final Set<String> _removedProjectIds = {};
   List<ProjectScreenVisitRecord> _rawVisits =
       const <ProjectScreenVisitRecord>[];
 
@@ -218,6 +219,9 @@ class RecentProjectVisitsNotifier extends Notifier<List<RecentProjectGroup>> {
     if (!ref.mounted) {
       return;
     }
+    visits = visits
+        .where((visit) => !_removedProjectIds.contains(visit.projectId))
+        .toList(growable: false);
     _rawVisits = visits;
     final serverNamesById = <String, String>{
       for (final server in ref.read(serverListProvider)) server.id: server.name,
@@ -241,7 +245,9 @@ class RecentProjectVisitsNotifier extends Notifier<List<RecentProjectGroup>> {
   }) async {
     final normalizedProjectId = projectId.trim();
     final normalizedDestId = destinationId.trim();
-    if (normalizedProjectId.isEmpty || normalizedDestId.isEmpty) {
+    if (normalizedProjectId.isEmpty ||
+        normalizedDestId.isEmpty ||
+        _removedProjectIds.contains(normalizedProjectId)) {
       return;
     }
 
@@ -264,6 +270,9 @@ class RecentProjectVisitsNotifier extends Notifier<List<RecentProjectGroup>> {
       return;
     }
 
+    if (_removedProjectIds.contains(normalizedProjectId)) {
+      return;
+    }
     final now = DateTime.now().toUtc();
     final resolvedProjectName =
         projectName ?? _resolveProjectName(normalizedProjectId);
@@ -374,8 +383,9 @@ class RecentProjectVisitsNotifier extends Notifier<List<RecentProjectGroup>> {
   }
 
   void removeProject(String projectId) {
-    state = state.where((g) => g.projectId != projectId).toList();
+    _removedProjectIds.add(projectId);
     _rawVisits = _rawVisits.where((v) => v.projectId != projectId).toList();
+    state = state.where((g) => g.projectId != projectId).toList();
   }
 
   String _resolveProjectName(String projectId) {

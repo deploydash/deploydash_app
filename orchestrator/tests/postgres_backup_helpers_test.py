@@ -11,7 +11,10 @@ the base case are in `tests/postgres_helpers_support.py`.
 from __future__ import annotations
 
 import os
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 from tests.postgres_helpers_support import (
     PostgresConfigValidationError,
@@ -26,7 +29,6 @@ from tests.postgres_helpers_support import (
     engine_postgres_ops,
     local_sql_import,
     patch,
-    tempfile,
 )
 
 
@@ -244,19 +246,39 @@ class TestPostgresBackupHelpers(PostgresHelpersTestCase):
         self.assertIn("wal-g st rm", s3_command["command"])
         self.assertIn("test_destination_type=s3", s3_command["command"])
 
-        filesystem_command = engine_postgres_ops._postgres_backup_destination_test_command(
-            {
-                "type": "filesystem",
-                "prefix": "/var/backups/deploydash",
-            },
-        )
-        self.assertIn('cp "${TEST_FILE}"', filesystem_command["command"])
-        self.assertIn('cat "${TEST_FILE_PATH}"', filesystem_command["command"])
-        self.assertIn('rm -f "${TEST_FILE_PATH}"', filesystem_command["command"])
-        self.assertIn(
-            "test_destination_type=filesystem",
-            filesystem_command["command"],
-        )
+    @unittest.skipUnless(os.name == "posix", "requires the managed-host shell")
+    def test_filesystem_destination_requires_existing_writable_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid = root / "backup's folder"
+            valid.mkdir()
+            regular_file = root / "not-a-directory"
+            regular_file.touch()
+            missing = root / "missing"
+            cases = [(valid, 0), (regular_file, 1), (missing, 1)]
+            if os.geteuid() != 0:
+                unwritable = root / "unwritable"
+                unwritable.mkdir(mode=0o500)
+                cases.append((unwritable, 1))
+            for path, expected in cases:
+                with self.subTest(path=path):
+                    plan = engine_postgres_ops._postgres_backup_destination_test_command(
+                        {"type": "filesystem", "prefix": str(path)},
+                    )
+                    result = subprocess.run(
+                        ["sh", "-c", plan["command"]],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    if expected == 0:
+                        self.assertEqual(plan["tested_remote_path"], str(path))
+                        self.assertIn("test_destination_type=filesystem", result.stdout)
+                        self.assertEqual(list(valid.iterdir()), [])
+                    else:
+                        self.assertIn("backup directory", result.stderr)
+            self.assertFalse(missing.exists())
 
     def test_run_project_operation_backup_policy_apply_success(self):
         backup_payload = {

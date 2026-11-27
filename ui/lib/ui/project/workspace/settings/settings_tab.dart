@@ -37,7 +37,10 @@ class _SettingsDangerZoneState extends ConsumerState<_SettingsDangerZone> {
   String? _deleteError;
   List<String> _deleteWarnings = const <String>[];
 
-  Future<bool> _confirmDelete(Project project) async {
+  Future<bool> _confirmDelete(
+    Project project,
+    List<String> sqliteVolumes,
+  ) async {
     final confirmController = TextEditingController();
     var acknowledged = false;
     final confirmed = await showDialog<bool>(
@@ -59,6 +62,11 @@ class _SettingsDangerZoneState extends ConsumerState<_SettingsDangerZone> {
                 width: 460,
                 child: AppFormSection(
                   children: [
+                    if (sqliteVolumes.isNotEmpty)
+                      Text(
+                        'Deploy Dash will keep these SQLite Docker volumes on the server: '
+                        '${sqliteVolumes.join(', ')}.',
+                      ),
                     Text(
                       projectDeleteDialogTypePrompt(project.name),
                       style: Theme.of(context).textTheme.bodySmall,
@@ -99,7 +107,22 @@ class _SettingsDangerZoneState extends ConsumerState<_SettingsDangerZone> {
     }
     final deleteScope = WorkspaceScope.fromSelection(project, server);
 
-    final confirmed = await _confirmDelete(project);
+    final coordinator = ref.read(projectDeletionCoordinatorProvider);
+    final List<String> sqliteVolumes;
+    try {
+      sqliteVolumes = await coordinator.sqliteVolumeNames(project);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _deleteError = couldntMessage('read SQLite storage', error);
+        });
+      }
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    final confirmed = await _confirmDelete(project, sqliteVolumes);
     if (!confirmed || !mounted) {
       return;
     }
@@ -132,9 +155,7 @@ class _SettingsDangerZoneState extends ConsumerState<_SettingsDangerZone> {
     });
 
     try {
-      final outcome = await ref
-          .read(projectDeletionCoordinatorProvider)
-          .start(project: project, server: server);
+      final outcome = await coordinator.start(project: project, server: server);
       ref.invalidate(projectDeletionRecoveriesProvider);
       final projectNotifier = ref.read(projectListProvider.notifier);
       if (outcome.completed) {
@@ -144,6 +165,9 @@ class _SettingsDangerZoneState extends ConsumerState<_SettingsDangerZone> {
             .forgetProjectState(project.id);
       } else {
         projectNotifier.hidePendingProject(project.id);
+        ref
+            .read(recentProjectVisitsProvider.notifier)
+            .removeProject(project.id);
       }
       ref.read(selectedProjectIdProvider.notifier).clear();
 

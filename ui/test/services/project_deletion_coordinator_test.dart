@@ -1,6 +1,7 @@
 import 'package:ui/data/local/app_database.dart';
 import 'package:ui/data/local/backup_repository.dart';
 import 'package:ui/data/local/project_repository.dart';
+import 'package:ui/data/local/project_sqlite_database_repository.dart';
 import 'package:ui/data/local/scheduler_task_repository.dart';
 import 'package:ui/data/local/server_credential_repository.dart';
 import 'package:ui/models/result.dart';
@@ -38,6 +39,7 @@ void main() {
       coordinator = ProjectDeletionCoordinator(
         recoveryRepository: recoveryRepository,
         projectRepository: projectRepository,
+        sqliteRepository: ProjectSqliteDatabaseRepository(database),
         backupRepository: backupRepository,
         schedulerRepository: schedulerRepository,
         credentialRepository: credentialRepository,
@@ -386,6 +388,7 @@ void main() {
         final failingCoordinator = ProjectDeletionCoordinator(
           recoveryRepository: recoveryRepository,
           projectRepository: projectRepository,
+          sqliteRepository: ProjectSqliteDatabaseRepository(database),
           backupRepository: _ThrowingBackupRepository(database),
           schedulerRepository: _ThrowingSchedulerRepository(database),
           credentialRepository: credentialRepository,
@@ -537,6 +540,26 @@ void main() {
       },
       skip: !sqliteAvailable,
     );
+
+    test('identifies retained current and legacy SQLite volumes', () async {
+      final repository = ProjectSqliteDatabaseRepository(database);
+      const managedVolume = 'deploydash_sqlite_current';
+      await repository.upsert(
+        const ProjectSqliteDatabase(
+          id: 'sqlite-current',
+          projectId: 'project-1',
+          name: 'Current',
+          volumeName: managedVolume,
+          mountPath: '/var/lib/deploydash/sqlite',
+          fileName: 'app.sqlite3',
+        ),
+      );
+      final outcome = await coordinator.start(
+        project: _projectRecord.copyWith(sqliteVolumeName: 'sqlite_legacy'),
+        server: _server,
+      );
+      expect(outcome.retainedSqliteVolumes, [managedVolume, 'sqlite_legacy']);
+    }, skip: !sqliteAvailable);
 
     test('provider constructs coordinator from repository dependencies', () {
       final container = ProviderContainer(

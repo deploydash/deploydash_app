@@ -9,6 +9,8 @@
 /// shared across files.
 library;
 
+import 'dart:async';
+
 import 'package:ui/data/local/app_database.dart';
 import 'package:ui/providers/server_list_provider.dart';
 import 'package:ui/providers/server_provider.dart';
@@ -255,6 +257,8 @@ class DatabaseEnableSshService extends LegacySshService {
   bool configured = false;
   final bool failEnable;
   final bool throwEnable;
+  Completer<void>? enableCompleter;
+  bool enableStarted = false;
 
   @override
   Future<Map<String, dynamic>> runWorkflowLegacy({
@@ -273,6 +277,8 @@ class DatabaseEnableSshService extends LegacySshService {
       };
     }
     if (workflowId == 'postgres' && operationId == 'service_enable') {
+      enableStarted = true;
+      await enableCompleter?.future;
       if (throwEnable) {
         throw StateError('ssh unavailable');
       }

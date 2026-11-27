@@ -265,33 +265,35 @@ def postgres_backup_destination_test_command(destination):
             "tested_remote_path": f"{test_remote_path}/<timestamp>-<pid>-backup-test.txt",
         }
 
-    test_file_path = (
-        destination["prefix"].rstrip("/")
-        + f"/{server_identifiers.BACKUP_CONNECTION_TEST_PREFIX}/"
-        + "$(date -u +%Y%m%dT%H%M%SZ)-$$-backup-test.txt"
-    )
     return {
         "command": (
             "set -eu; "
-            'TMP_DIR="$(mktemp -d)"; '
-            'cleanup(){ rm -rf "${TMP_DIR}" >/dev/null 2>&1 || true; }; '
-            "trap cleanup EXIT INT TERM; "
-            'TEST_FILE="${TMP_DIR}/backup-destination-test.txt"; '
-            'READ_FILE="${TMP_DIR}/backup-destination-read.txt"; '
-            "printf 'deploydash backup destination test %s\\n' "
-            '"$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${TEST_FILE}"; '
-            f"TEST_FILE_PATH={shlex.quote(test_file_path)}; "
-            'mkdir -p "$(dirname "${TEST_FILE_PATH}")"; '
-            'cp "${TEST_FILE}" "${TEST_FILE_PATH}"; '
-            'cat "${TEST_FILE_PATH}" > "${READ_FILE}"; '
-            'cmp -s "${TEST_FILE}" "${READ_FILE}"; '
-            'rm -f "${TEST_FILE_PATH}"; '
-            'echo "tested_remote_path=${TEST_FILE_PATH}"; '
-            "echo 'test_destination_type=filesystem'; "
-            "echo 'test_result=ok'"
+            + _filesystem_backup_preflight(destination["prefix"])
+            + "echo 'test_destination_type=filesystem'; echo 'test_result=ok'"
         ),
-        "tested_remote_path": test_file_path,
+        "tested_remote_path": destination["prefix"],
     }
+
+
+def _filesystem_backup_preflight(path):
+    """Check the existing storage root under the identity used by the job."""
+    return (
+        f"BACKUP_ROOT={shlex.quote(path)}; "
+        'if [ ! -d "${BACKUP_ROOT}" ]; then '
+        'echo "Choose an existing backup directory on the managed server: ${BACKUP_ROOT}" >&2; '
+        "exit 1; fi; "
+        'if ! PROBE="$(mktemp -- "${BACKUP_ROOT%/}/.deploydash-backup-test.XXXXXX")"; then '
+        'echo "The backup directory is not writable: ${BACKUP_ROOT}" >&2; '
+        "exit 1; fi; "
+        "trap 'rm -f -- \"${PROBE}\"' EXIT; "
+        "trap 'exit 1' HUP INT TERM; "
+        'if ! printf %s deploydash > "${PROBE}" || '
+        '[ "$(cat -- "${PROBE}")" != deploydash ]; then '
+        'echo "Could not write and read a file in the backup directory: ${BACKUP_ROOT}" >&2; '
+        "exit 1; fi; "
+        'rm -f -- "${PROBE}"; '
+        "trap - EXIT HUP INT TERM; "
+    )
 
 
 def _backup_policy_environment_body(
@@ -455,9 +457,13 @@ def postgres_backup_policy_apply_command(
     quoted_script_body = shlex.quote(script_body)
     quoted_cron_body = shlex.quote(cron_body)
 
+    preflight = (
+        _filesystem_backup_preflight(destination["prefix"])
+        if enabled and destination["type"] == "filesystem"
+        else ""
+    )
     command = (
-        "set -eu; "
-        f"POLICY_DIR={quoted_policy_dir}; "
+        "set -eu; " + preflight + f"POLICY_DIR={quoted_policy_dir}; "
         f"ENV_PATH={quoted_env_path}; "
         f"SCRIPT_PATH={quoted_script_path}; "
         f"CRON_PATH={quoted_cron_path}; "

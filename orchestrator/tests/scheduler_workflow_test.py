@@ -293,6 +293,19 @@ class TestSchedulerWorkflow(unittest.TestCase):
                     "settings": {
                         "project_slug": "remix-blog",
                         "task_ids": ["task-a", "task-b"],
+                        "tasks": [
+                            {
+                                "task_id": "task-a",
+                                "target_type": "web_app",
+                                "command": "php -v",
+                            },
+                            {
+                                "task_id": "task-b",
+                                "target_type": "worker",
+                                "target_ref": "worker-one",
+                                "command": "php -v",
+                            },
+                        ],
                     },
                 },
             }

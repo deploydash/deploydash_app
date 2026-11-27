@@ -48,7 +48,7 @@ class ProjectWorkspace extends StatelessWidget {
                   }
                 }
 
-                return AppWorkspaceScaffold(
+                final workspace = AppWorkspaceScaffold(
                   destinations: _tabs
                       .map(
                         (tab) => AppContextNavigationItem(
@@ -89,6 +89,10 @@ class ProjectWorkspace extends StatelessWidget {
                       _SettingsTabView(onProjectDeleted: onProjectDeleted),
                     ],
                   ),
+                );
+                return AppWindowTitle(
+                  screen: 'Project - ${_tabs[controller.index].label}',
+                  child: workspace,
                 );
               },
             ),

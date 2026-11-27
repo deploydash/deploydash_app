@@ -438,6 +438,25 @@ void main() {
     await tester.pump();
     expect(dismissCount, 1);
 
+    final retained = ['deploydash_sqlite_alpha', 'deploydash_sqlite_beta'];
+    await tester.pumpWidget(
+      _wrap(
+        _home(
+          deletedProjectNotice: DeletedProjectNotice(
+            projectName: 'Alpha App',
+            warnings: const [],
+            retainedSqliteVolumes: retained,
+          ),
+        ),
+      ),
+    );
+    final sqliteReceipt = tester.widget<SelectableText>(
+      find.byKey(const Key('home-delete-retained-sqlite-volumes')),
+    );
+    expect(sqliteReceipt.data, contains(retained.join(', ')));
+    expect(find.text('Project deleted'), findsOneWidget);
+    expect(find.text('Remote cleanup warnings:'), findsNothing);
+
     await tester.pumpWidget(
       _wrap(
         _home(

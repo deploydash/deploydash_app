@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ui/providers/recent_projects_provider.dart';
 import 'package:ui/providers/scheduler_task_provider.dart';
 import 'package:ui/providers/worker_instance_provider.dart';
 
@@ -70,6 +71,19 @@ void main() {
         ),
       );
 
+      final sqlite = ProjectSqliteDatabaseRepository(database);
+      await sqlite.upsert(
+        ProjectSqliteDatabase(
+          id: 'app-sqlite',
+          projectId: selectedProject.id,
+          name: 'App data',
+          volumeName: 'deploydash_sqlite_app_data',
+          mountPath: '/var/lib/deploydash/sqlite',
+          fileName: 'app.sqlite3',
+          volumeExists: true,
+        ),
+      );
+
       final schedulerRepository = SchedulerTaskRepository(database);
       await schedulerRepository.upsertTask(
         SchedulerTaskRecord(
@@ -137,9 +151,15 @@ void main() {
         reference: serverWithDatabaseEnabled.credentialReference,
         sshPassword: 'postgres-password',
       );
+      ProjectDeletionOutcome? deletionOutcome;
       await pumpProjectWorkspace(
         tester,
         database: database,
+        child: ProjectWorkspace(
+          onProjectDeleted: (outcome) {
+            deletionOutcome = outcome;
+          },
+        ),
         overrides: [
           selectedServerProvider.overrideWithValue(serverWithDatabaseEnabled),
           sshServiceProvider.overrideWithValue(sshService),
@@ -186,6 +206,13 @@ void main() {
         isNotNull,
       );
       expect(container.read(selectedProjectIdProvider), isNotEmpty);
+      await container
+          .read(recentProjectVisitsProvider.notifier)
+          .recordVisit(
+            projectId: selectedProject.id,
+            destinationId: 'database',
+          );
+      expect(container.read(recentProjectGroupsProvider), isNotEmpty);
 
       await tester.tap(find.byKey(const Key('settings-delete-button')));
       await tester.pumpAndSettle();
@@ -194,6 +221,7 @@ void main() {
         find.byKey(const Key('settings-delete-confirm-dialog')),
         findsOneWidget,
       );
+      expect(find.textContaining('deploydash_sqlite_app_data'), findsOneWidget);
       await tester.enterText(
         find.byKey(const Key('settings-delete-confirm-input')),
         selectedProject.name,
@@ -207,6 +235,12 @@ void main() {
 
       final remainingProjects = await projectRepository.listProjects();
       expect(remainingProjects, isEmpty);
+      expect(await sqlite.listForProject(selectedProject.id), isEmpty);
+      expect(deletionOutcome?.retainedSqliteVolumes, [
+        'deploydash_sqlite_app_data',
+      ]);
+      expect(sshService.countCalls('app', 'sqlite_volume_delete'), 0);
+      expect(container.read(recentProjectGroupsProvider), isEmpty);
       expect(
         await schedulerRepository.listTasksForProject(selectedProject.id),
         isEmpty,
@@ -401,6 +435,33 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets('Settings tab stops when retained storage cannot be read', (
+      WidgetTester tester,
+    ) async {
+      final database = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+      await pumpProjectWorkspace(
+        tester,
+        database: database,
+        child: const ProjectWorkspace(initialTabIndex: 8),
+        overrides: [
+          selectedProjectProvider.overrideWithValue(selectedProject),
+          projectSqliteDatabaseRepositoryProvider.overrideWithValue(
+            _FailingSqliteInventory(database),
+          ),
+        ],
+      );
+
+      await tester.tap(find.byKey(const Key('settings-delete-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('settings-delete-confirm-dialog')),
+        findsNothing,
+      );
+      expect(find.textContaining('read SQLite storage'), findsOneWidget);
+    }, skip: !sqliteAvailable);
 
     testWidgets('Settings tab delete dialog cancel leaves project untouched', (
       WidgetTester tester,
@@ -734,4 +795,13 @@ void main() {
       },
     );
   }, skip: !sqliteAvailable);
+}
+
+class _FailingSqliteInventory extends ProjectSqliteDatabaseRepository {
+  _FailingSqliteInventory(super.database);
+
+  @override
+  Future<List<ProjectSqliteDatabase>> listForProject(String projectId) async {
+    throw StateError('fixture inventory failed');
+  }
 }

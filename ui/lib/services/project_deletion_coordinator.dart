@@ -1,6 +1,7 @@
 import '../data/local/backup_repository.dart';
 import '../data/local/project_deletion_recovery_repository.dart';
 import '../data/local/project_repository.dart';
+import '../data/local/project_sqlite_database_repository.dart';
 import '../data/local/scheduler_task_repository.dart';
 import '../data/local/server_credential_repository.dart';
 import '../data/local/server_repository.dart';
@@ -25,6 +26,7 @@ class ProjectDeletionOutcome {
     required this.projectName,
     required this.completed,
     required this.messages,
+    this.retainedSqliteVolumes = const [],
   });
 
   /// The project's name, for the message the user is shown.
@@ -39,6 +41,9 @@ class ProjectDeletionOutcome {
   /// One line per step that did not succeed, already sanitized for display.
   /// Empty when [completed] is true.
   final List<String> messages;
+
+  /// Names to identify the project volumes Deploy Dash left on its server.
+  final List<String> retainedSqliteVolumes;
 }
 
 /// Removes a project's resources from its server, one resumable step at a
@@ -60,12 +65,14 @@ class ProjectDeletionCoordinator {
   const ProjectDeletionCoordinator({
     required ProjectDeletionRecoveryRepository recoveryRepository,
     required ProjectRepository projectRepository,
+    required ProjectSqliteDatabaseRepository sqliteRepository,
     required BackupRepository backupRepository,
     required SchedulerTaskRepository schedulerRepository,
     required ServerCredentialRepository credentialRepository,
     required SSHService sshService,
   }) : _recoveryRepository = recoveryRepository,
        _projectRepository = projectRepository,
+       _sqliteRepository = sqliteRepository,
        _backupRepository = backupRepository,
        _schedulerRepository = schedulerRepository,
        _credentialRepository = credentialRepository,
@@ -73,10 +80,20 @@ class ProjectDeletionCoordinator {
 
   final ProjectDeletionRecoveryRepository _recoveryRepository;
   final ProjectRepository _projectRepository;
+  final ProjectSqliteDatabaseRepository _sqliteRepository;
   final BackupRepository _backupRepository;
   final SchedulerTaskRepository _schedulerRepository;
   final ServerCredentialRepository _credentialRepository;
   final SSHService _sshService;
+
+  /// Identifies the project's managed SQLite volumes before local records go away.
+  Future<List<String>> sqliteVolumeNames(Project project) async {
+    final databases = await _sqliteRepository.listForProject(project.id);
+    return {
+      for (final database in databases) database.volumeName,
+      ?trimOrNull(project.sqliteVolumeName),
+    }.toList()..sort();
+  }
 
   /// Begins deleting [project]'s resources from [server].
   ///
@@ -95,7 +112,11 @@ class ProjectDeletionCoordinator {
       projectName: project.name,
       projectSlug: slugifyProjectName(project.name, fallback: 'project-app'),
     );
-    return _run(project: _DeletionProject.fromProject(project), server: server);
+    return _run(
+      project: _DeletionProject.fromProject(project),
+      server: server,
+      retainedSqliteVolumes: await sqliteVolumeNames(project),
+    );
   }
 
   /// Resumes a recorded deletion, skipping steps already marked successful.
@@ -119,12 +140,17 @@ class ProjectDeletionCoordinator {
         messages: const [],
       );
     }
-    return _run(project: _DeletionProject.fromProject(project), server: server);
+    return _run(
+      project: _DeletionProject.fromProject(project),
+      server: server,
+      retainedSqliteVolumes: await sqliteVolumeNames(project),
+    );
   }
 
   Future<ProjectDeletionOutcome> _run({
     required _DeletionProject project,
     required Server? server,
+    required List<String> retainedSqliteVolumes,
   }) async {
     var recovery = await _recoveryRepository.beginAttempt(project.id);
     final steps = <String, ProjectDeletionStepState>{
@@ -174,7 +200,7 @@ class ProjectDeletionCoordinator {
         'Connect to the project server',
         'Server cleanup could not run because the project server is not available.',
       );
-      return _outcome(project.name, steps.values);
+      return _outcome(project.name, steps.values, retainedSqliteVolumes);
     }
 
     final connection = await _credentialRepository.connectionPayload(server);
@@ -184,7 +210,7 @@ class ProjectDeletionCoordinator {
         'Connect to the project server',
         'This server connection needs to be reconnected before cleanup can continue.',
       );
-      return _outcome(project.name, steps.values);
+      return _outcome(project.name, steps.values, retainedSqliteVolumes);
     }
 
     final connectionStep = ensureStep(
@@ -396,12 +422,13 @@ class ProjectDeletionCoordinator {
     }
 
     recovery = (await _recoveryRepository.getRecovery(project.id)) ?? recovery;
-    return _outcome(project.name, recovery.steps);
+    return _outcome(project.name, recovery.steps, retainedSqliteVolumes);
   }
 
   static ProjectDeletionOutcome _outcome(
     String projectName,
     Iterable<ProjectDeletionStepState> steps,
+    List<String> retainedSqliteVolumes,
   ) {
     final failed = steps
         .where((step) => step.status == ProjectDeletionStepStatus.failed)
@@ -412,6 +439,7 @@ class ProjectDeletionCoordinator {
     return ProjectDeletionOutcome(
       projectName: projectName,
       completed: failed.isEmpty && pending.isEmpty,
+      retainedSqliteVolumes: retainedSqliteVolumes,
       messages: <String>[
         for (final step in failed)
           '${step.label}: ${step.message ?? 'cleanup did not finish'}',

@@ -330,6 +330,7 @@ extension _ServicesTabActions on _ServicesTabState {
       metadata: <String, Object?>{'operationId': operationId},
     );
 
+    final catalog = ref.read(serverCatalogProvider.notifier);
     final connection = await _buildConnectionPayload(server);
     if (connection == null) {
       _showServiceMessage(servicesCredentialsRequiredMessage());
@@ -384,18 +385,21 @@ extension _ServicesTabActions on _ServicesTabState {
         onEvent: _appendServiceLogEvent,
       )).diagnosticPayload;
 
-      if (!isCurrentServerRun(run)) {
-        return false;
+      final succeeded = result['status'] == 'success';
+      final changesProvisioning =
+          operationId == 'service_enable' || operationId == 'service_delete';
+      if (succeeded && changesProvisioning) {
+        await catalog.updateServerServices(
+          serverId: server.id,
+          enableDatabases: operationId == 'service_enable',
+        );
       }
 
-      if (result['status'] == 'success') {
-        if (operationId == 'service_enable' ||
-            operationId == 'service_delete') {
-          await _syncDatabaseServiceEnabled(operationId == 'service_enable');
-          if (!isCurrentServerRun(run)) {
-            return true;
-          }
-        }
+      if (!isCurrentServerRun(run)) {
+        return succeeded && changesProvisioning;
+      }
+
+      if (succeeded) {
         final successMessage =
             showSuccessMessage ??
             result['msg']?.toString() ??
@@ -676,27 +680,6 @@ extension _ServicesTabActions on _ServicesTabState {
     );
   }
   // end coverage-gate
-
-  Future<void> _syncDatabaseServiceEnabled(bool enabled) async {
-    final widgetServer = widget.server;
-    if (widgetServer == null) {
-      return;
-    }
-    final catalogServer = ref.read(serverCatalogProvider).selectedServer;
-    if (catalogServer == null || catalogServer.id != widgetServer.id) {
-      return;
-    }
-    if (catalogServer.serviceDatabaseEnabled == enabled) {
-      return;
-    }
-    await ref
-        .read(serverCatalogProvider.notifier)
-        .updateSelectedServerServices(
-          enableDatabases: enabled,
-          enableEmailAccounts: catalogServer.serviceEmailEnabled,
-          enableDomains: catalogServer.serviceDomainEnabled,
-        );
-  }
 
   Future<ServerPostgresConfig> _persistPostgresConfigWithPassword(
     ServerPostgresConfig config,

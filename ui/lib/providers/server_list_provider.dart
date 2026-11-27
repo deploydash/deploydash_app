@@ -126,22 +126,50 @@ class ServerCatalogNotifier extends Notifier<ServerCatalogState> {
     required bool enableEmailAccounts,
     required bool enableDomains,
   }) async {
-    final selected = state.selectedServer;
-    if (selected == null) {
+    final serverId = state.selectedServer?.id;
+    if (serverId == null) {
+      return;
+    }
+    await updateServerServices(
+      serverId: serverId,
+      enableDatabases: enableDatabases,
+      enableEmailAccounts: enableEmailAccounts,
+      enableDomains: enableDomains,
+    );
+  }
+
+  /// Persists service state for the server that ran the operation.
+  Future<void> updateServerServices({
+    required String serverId,
+    required bool enableDatabases,
+    bool? enableEmailAccounts,
+    bool? enableDomains,
+  }) async {
+    final server = state.servers
+        .where((item) => item.id == serverId)
+        .firstOrNull;
+    if (server == null) {
+      return;
+    }
+    final emailEnabled = enableEmailAccounts ?? server.serviceEmailEnabled;
+    final domainsEnabled = enableDomains ?? server.serviceDomainEnabled;
+    if (server.serviceDatabaseEnabled == enableDatabases &&
+        server.serviceEmailEnabled == emailEnabled &&
+        server.serviceDomainEnabled == domainsEnabled) {
       return;
     }
     await ref
         .read(serverRepositoryProvider)
         .updateServerServices(
-          serverId: selected.id,
+          serverId: serverId,
           enableDatabases: enableDatabases,
-          enableEmailAccounts: enableEmailAccounts,
-          enableDomains: enableDomains,
+          enableEmailAccounts: emailEnabled,
+          enableDomains: domainsEnabled,
         );
 
     final updatedServers = state.servers
         .map((server) {
-          if (server.id != selected.id) {
+          if (server.id != serverId) {
             return server;
           }
           return Server(
@@ -156,8 +184,8 @@ class ServerCatalogNotifier extends Notifier<ServerCatalogState> {
             memoryMb: server.memoryMb,
             diskGb: server.diskGb,
             serviceDatabaseEnabled: enableDatabases,
-            serviceEmailEnabled: enableEmailAccounts,
-            serviceDomainEnabled: enableDomains,
+            serviceEmailEnabled: emailEnabled,
+            serviceDomainEnabled: domainsEnabled,
             webServerConfig: server.webServerConfig,
             postgresConfig: server.postgresConfig,
             firewallConfig: server.firewallConfig,

@@ -437,6 +437,81 @@ void main() {
       expect(find.text('Primary S3'), findsOneWidget);
     });
 
+    for (final succeeds in [true, false]) {
+      testWidgets(
+        'Backup filesystem test can finish after dismissal ($succeeds)',
+        (WidgetTester tester) async {
+          final database = AppDatabase.forTesting(NativeDatabase.memory());
+          addTearDown(database.close);
+          final response = Completer<Map<String, dynamic>>();
+          final ssh = DatabaseWorkflowSshService(
+            projectListResponse: const {'status': 'success'},
+          )..destinationTestResponse = response.future;
+          await pumpProjectWorkspace(
+            tester,
+            database: database,
+            child: const ProjectWorkspace(initialTabIndex: 5),
+            overrides: [
+              selectedProjectProvider.overrideWithValue(selectedProject),
+              selectedServerProvider.overrideWithValue(
+                serverWithDatabaseEnabled,
+              ),
+              sshServiceProvider.overrideWithValue(ssh),
+            ],
+          );
+          await tester.tap(
+            find.byKey(const Key('backup-add-destination-button')),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(
+            find.byKey(const Key('backup-destination-type-field')),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Local filesystem').last);
+          await tester.pumpAndSettle();
+          await tester.enterText(
+            find.byKey(const Key('backup-destination-name-field')),
+            'Filesystem',
+          );
+          await tester.enterText(
+            find.byKey(const Key('backup-destination-file-path-field')),
+            '/var/backups/fixture',
+          );
+          await tester.tap(
+            find.byKey(const Key('backup-destination-test-button')),
+          );
+          await tester.pump();
+          final testCall = ssh.callLog.lastWhere(
+            (call) => call['operation_id'] == 'backup_destination_test',
+          );
+          final params = testCall['params'] as Map<String, dynamic>;
+          expect(
+            params['settings'],
+            containsPair('backup_destination_type', 'filesystem'),
+          );
+          expect(
+            params['settings'],
+            containsPair('backup_file_prefix', '/var/backups/fixture'),
+          );
+          await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+          await tester.pumpAndSettle();
+
+          if (succeeds) {
+            response.complete({'status': 'success'});
+          } else {
+            response.completeError(StateError('fixture connection failed'));
+          }
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const Key('backup-destination-dialog')),
+            findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+        },
+        skip: !sqliteAvailable,
+      );
+    }
+
     testWidgets(
       'Backup destination probe validates input and surfaces transport failures',
       (WidgetTester tester) async {
@@ -1730,6 +1805,25 @@ void main() {
 
       await tester.tap(find.byKey(const Key('backup-add-policy-button')));
       await tester.pumpAndSettle();
+      final time = find.byKey(const Key('backup-policy-time-one-field'));
+      final retention = find.byKey(const Key('backup-policy-retention-field'));
+      expect(
+        tester.getTopLeft(retention).dy - tester.getBottomLeft(time).dy,
+        greaterThanOrEqualTo(12),
+      );
+      await tester.tap(find.byKey(const Key('backup-policy-schedule-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Twice daily').last);
+      await tester.pumpAndSettle();
+      final second = find.byKey(const Key('backup-policy-time-two-field'));
+      expect(
+        tester.getTopLeft(second).dy - tester.getBottomLeft(time).dy,
+        greaterThanOrEqualTo(12),
+      );
+      expect(
+        tester.getTopLeft(retention).dy - tester.getBottomLeft(second).dy,
+        greaterThanOrEqualTo(12),
+      );
       await tester.enterText(
         find.byKey(const Key('backup-policy-name-field')),
         'Logical names plan',

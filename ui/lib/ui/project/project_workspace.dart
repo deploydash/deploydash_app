@@ -47,6 +47,7 @@ import '../../providers/worker_instance_provider.dart';
 import '../../services/app_analytics_service.dart';
 import '../../services/project_database_settings.dart';
 import '../../services/runtime_log_settings.dart';
+import '../system/app_window_title.dart';
 import '../system/app_dialogs.dart';
 import '../system/app_forms.dart';
 import '../system/app_copy.dart';
