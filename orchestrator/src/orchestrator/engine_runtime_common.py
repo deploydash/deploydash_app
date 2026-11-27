@@ -6,7 +6,7 @@ import shlex
 import subprocess
 import tempfile
 
-from paramiko import DSSKey, ECDSAKey, Ed25519Key, RSAKey
+from paramiko import ECDSAKey, Ed25519Key, RSAKey
 from pyinfra.api.exceptions import ConnectError
 
 from .addressing import format_host_port, normalize_host
@@ -127,9 +127,7 @@ def _build_connector_data(
         "ssh_allow_agent": False,
         "ssh_look_for_keys": False,
         "ssh_connect_retries": 0,
-        # GHSA-r374-rxx8-8654: paramiko accepts SHA-1 RSA signatures and
-        # no fixed release fits pyinfra's paramiko<5 cap, so refuse the
-        # SHA-1 key algorithms here. RSA keys keep working via SHA-2.
+        # Refuse deprecated SSH key algorithms. RSA keys use SHA-2.
         "ssh_paramiko_connect_kwargs": {
             "auth_timeout": auth_timeout,
             "banner_timeout": banner_timeout,
@@ -233,7 +231,7 @@ def _parse_private_key_material(private_key):
     if normalized_key is None:
         return None
     key_text = normalized_key if normalized_key.endswith("\n") else f"{normalized_key}\n"
-    for key_type in (Ed25519Key, RSAKey, ECDSAKey, DSSKey):
+    for key_type in (Ed25519Key, RSAKey, ECDSAKey):
         try:
             return key_type.from_private_key(io.StringIO(key_text))
         except Exception:

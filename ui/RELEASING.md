@@ -466,8 +466,8 @@ Platform-aware release validation runs in `.github/workflows/`:
 
 - `ci.yml`: PR/main gates (analyze, unit tests, scaffold + secret audits).
 - `release.yml`: tag pipeline — test gate, platform builds to a draft
-  release, hosted Windows slim, private QA handoff for the remaining
-  legs, publish on QA success.
+  release, hosted Windows and macOS slim checks, private QA handoff for
+  the remaining legs, and publish on QA success.
 - `qa-public-windows-slim.yml` (reusable, called by `release.yml`):
   checks out the private QA suite via a read-only deploy key and runs
   the Windows slim gate on a hosted runner (free minutes). Logs and
@@ -475,12 +475,15 @@ Platform-aware release validation runs in `.github/workflows/`:
   private repo. Treat workflow write access as the security boundary:
   any writer can exfiltrate secrets via workflow edits, so keep the
   writer circle minimal and pin third-party actions by SHA.
+- `qa-public-macos-slim.yml` (reusable, called by `release.yml`):
+  runs the private QA suite's arm64 smoke check against the signed DMG
+  on a GitHub-hosted macOS runner. It uses the same read-only suite
+  deploy key and public run logs and artifacts as the Windows caller.
 - `desktop-release-scaffolds.yml`, `desktop-dart.yml`,
   `desktop-database-coverage.yml`, `backend-engine.yml`: scoped gates.
 - `desktop-direct-builds.yml` (reusable, called by `release.yml`):
-  dual-arch Ubuntu `.deb`, dual-arch signed DMGs with slim per-arch
-  install checks, and dual-arch unsigned Windows Store candidates;
-  artifacts attach to the draft release only.
+  Ubuntu `.deb` packages, signed arm64 DMGs, and unsigned Windows Store
+  candidates. Artifacts attach to the draft release only.
 - `desktop-snap-build.yml` (reusable): Snap build with draft attach.
 
 Actions are official, vendor-official, or in-repo only (see the repo

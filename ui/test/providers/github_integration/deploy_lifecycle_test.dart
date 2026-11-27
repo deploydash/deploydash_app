@@ -55,7 +55,7 @@ class _ThrowingMilestonePreferences extends AppPreferencesRepository {
     AppUserAttribute attribute, {
     DateTime? reachedAt,
   }) async {
-    throw StateError('milestone store unavailable');
+    throw AssertionError('milestone store unavailable');
   }
 }
 

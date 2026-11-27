@@ -977,11 +977,7 @@ class GitHubIntegrationNotifier extends Notifier<GitHubIntegrationState> {
           .read(appPreferencesRepositoryProvider)
           .recordAnalyticsMilestone(AppUserAttribute.hasFirstDeploySucceeded);
       await ref.read(telemetrySettingsProvider.notifier).refresh();
-    } on Exception catch (error) {
-      if (kDebugMode) {
-        debugPrint('First-deploy milestone skipped; the deploy stands: $error');
-      }
-    } on StateError catch (error) {
+    } on Object catch (error) {
       if (kDebugMode) {
         debugPrint('First-deploy milestone skipped; the deploy stands: $error');
       }

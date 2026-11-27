@@ -137,12 +137,15 @@ bool _failureMentionsAny(
   List<String> markers,
 ) {
   final normalizedFailure = failureMessage.toLowerCase();
-  if (markers.any(normalizedFailure.contains)) {
+  final normalizedMarkers = markers
+      .map((marker) => marker.toLowerCase())
+      .toList();
+  if (normalizedMarkers.any(normalizedFailure.contains)) {
     return true;
   }
   return timeline.any((line) {
     final normalizedLine = line.toLowerCase();
-    return markers.any(normalizedLine.contains);
+    return normalizedMarkers.any(normalizedLine.contains);
   });
 }
 
