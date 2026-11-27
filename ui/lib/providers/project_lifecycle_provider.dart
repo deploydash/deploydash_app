@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/local/project_repository.dart';
 import 'backup_provider.dart';
 import 'project_deletion_provider.dart';
 import 'project_provider.dart';
@@ -128,6 +129,14 @@ class ProjectLifecycleActions {
   Future<ProjectDeletionOutcome> removePendingProjectLocalRecord(
     ProjectDeletionRecoveryRecord recovery,
   ) async {
+    final project = await _ref
+        .read(projectRepositoryProvider)
+        .readProject(recovery.projectId, includePendingDeletion: true);
+    final retainedSqliteVolumes = project == null
+        ? const <String>[]
+        : await _ref
+              .read(projectDeletionCoordinatorProvider)
+              .sqliteVolumeNames(project);
     await _ref
         .read(projectListProvider.notifier)
         .deleteProject(recovery.projectId);
@@ -136,6 +145,7 @@ class ProjectLifecycleActions {
     return ProjectDeletionOutcome(
       projectName: recovery.projectName,
       completed: true,
+      retainedSqliteVolumes: retainedSqliteVolumes,
       messages: const [
         'The local project record was removed. Remote resources may still remain.',
       ],
@@ -143,6 +153,7 @@ class ProjectLifecycleActions {
   }
 
   void forgetProjectState(String projectId) {
+    _ref.read(recentProjectVisitsProvider.notifier).removeProject(projectId);
     _ref.read(projectWorkerInstancesProvider.notifier).forgetProject(projectId);
     _ref.read(projectSchedulerProvider.notifier).forgetProject(projectId);
     _ref.read(projectBackupProvider.notifier).forgetProject(projectId);

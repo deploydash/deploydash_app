@@ -1730,6 +1730,25 @@ void main() {
 
       await tester.tap(find.byKey(const Key('backup-add-policy-button')));
       await tester.pumpAndSettle();
+      final time = find.byKey(const Key('backup-policy-time-one-field'));
+      final retention = find.byKey(const Key('backup-policy-retention-field'));
+      expect(
+        tester.getTopLeft(retention).dy - tester.getBottomLeft(time).dy,
+        greaterThanOrEqualTo(12),
+      );
+      await tester.tap(find.byKey(const Key('backup-policy-schedule-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Twice daily').last);
+      await tester.pumpAndSettle();
+      final second = find.byKey(const Key('backup-policy-time-two-field'));
+      expect(
+        tester.getTopLeft(second).dy - tester.getBottomLeft(time).dy,
+        greaterThanOrEqualTo(12),
+      );
+      expect(
+        tester.getTopLeft(retention).dy - tester.getBottomLeft(second).dy,
+        greaterThanOrEqualTo(12),
+      );
       await tester.enterText(
         find.byKey(const Key('backup-policy-name-field')),
         'Logical names plan',

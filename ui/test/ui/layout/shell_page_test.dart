@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:ui/ui/system/app_window_title.dart';
 import 'package:ui/data/local/app_database.dart';
 import 'package:ui/data/local/app_preferences_repository.dart';
 import 'package:ui/data/local/project_repository.dart';
@@ -859,12 +860,16 @@ void main() {
   testWidgets('Left rail settings button opens global app settings', (
     WidgetTester tester,
   ) async {
+    final titles = <String>[];
+    debugOverrideAppWindowTitleSetter((title) async => titles.add(title));
+    addTearDown(() => debugOverrideAppWindowTitleSetter(null));
     await _pumpShellPage(tester, withServer: true);
 
     await tester.tap(find.byKey(const Key('left-rail-app-settings-button')));
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('App Settings'), findsOneWidget);
+    expect(titles.last, 'Deploy Dash - App Settings - Appearance');
     expect(
       find.text('Application-wide preferences and security'),
       findsOneWidget,
@@ -1065,11 +1070,17 @@ void main() {
   testWidgets('A newly created project opens on Web app', (
     WidgetTester tester,
   ) async {
+    final titles = <String>[];
+    debugOverrideAppWindowTitleSetter((title) async => titles.add(title));
+    addTearDown(() => debugOverrideAppWindowTitleSetter(null));
     final database = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
 
     await _pumpShellPage(tester, withServer: true, database: database);
     await _createProject(tester, name: 'Brand New App');
+
+    expect(find.text('Created project "Brand New App".'), findsOneWidget);
+    expect(titles.last, 'Deploy Dash - Project - Web app');
 
     final workspace = tester.widget<ProjectWorkspace>(
       find.byType(ProjectWorkspace),

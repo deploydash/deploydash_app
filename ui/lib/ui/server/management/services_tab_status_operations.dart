@@ -96,7 +96,12 @@ extension _ServicesTabStatusOperations on _ServicesTabState {
           );
           final configured =
               serviceStatus is Map && serviceStatus['configured'] == true;
-          await _syncDatabaseServiceEnabled(configured);
+          await ref
+              .read(serverCatalogProvider.notifier)
+              .updateServerServices(
+                serverId: server.id,
+                enableDatabases: configured,
+              );
           if (!isCurrentServerRun(run)) {
             return;
           }

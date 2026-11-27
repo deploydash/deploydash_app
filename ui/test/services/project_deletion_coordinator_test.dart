@@ -1,6 +1,7 @@
 import 'package:ui/data/local/app_database.dart';
 import 'package:ui/data/local/backup_repository.dart';
 import 'package:ui/data/local/project_repository.dart';
+import 'package:ui/data/local/project_sqlite_database_repository.dart';
 import 'package:ui/data/local/scheduler_task_repository.dart';
 import 'package:ui/data/local/server_credential_repository.dart';
 import 'package:ui/models/result.dart';
@@ -38,6 +39,7 @@ void main() {
       coordinator = ProjectDeletionCoordinator(
         recoveryRepository: recoveryRepository,
         projectRepository: projectRepository,
+        sqliteRepository: ProjectSqliteDatabaseRepository(database),
         backupRepository: backupRepository,
         schedulerRepository: schedulerRepository,
         credentialRepository: credentialRepository,
@@ -386,6 +388,7 @@ void main() {
         final failingCoordinator = ProjectDeletionCoordinator(
           recoveryRepository: recoveryRepository,
           projectRepository: projectRepository,
+          sqliteRepository: ProjectSqliteDatabaseRepository(database),
           backupRepository: _ThrowingBackupRepository(database),
           schedulerRepository: _ThrowingSchedulerRepository(database),
           credentialRepository: credentialRepository,

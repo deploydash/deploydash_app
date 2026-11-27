@@ -988,6 +988,82 @@ void main() {
     ]);
   });
 
+  testWidgets(
+    'Postgres enable persists for its server after leaving Services',
+    (WidgetTester tester) async {
+      final database = AppDatabase.forTesting(NativeDatabase.memory());
+      final showServices = ValueNotifier(true);
+      final ssh = DatabaseEnableSshService()
+        ..enableCompleter = Completer<void>();
+      addTearDown(database.close);
+      addTearDown(showServices.dispose);
+      addTearDown(ssh.dispose);
+      final catalog = FakeServerCatalogNotifier(
+        ServerCatalogState(
+          isLoading: false,
+          servers: const [
+            serverWithCredentials,
+            serverWithAlternateCredentials,
+          ],
+          selectedServerId: serverWithCredentials.id,
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWithValue(database),
+            serverConnectionPayloadResolverProvider.overrideWithValue(
+              testServerConnectionPayload,
+            ),
+            sshServiceProvider.overrideWithValue(ssh),
+            serverCatalogProvider.overrideWith(() => catalog),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: ValueListenableBuilder(
+                valueListenable: showServices,
+                builder: (_, show, _) => show
+                    ? const ServerManagementView(
+                        server: serverWithCredentials,
+                        initialTabIndex: 1,
+                      )
+                    : const Text('Other workspace'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _scrollToServiceKey(tester, 'service-enable-database');
+      await tester.tap(find.byKey(const Key('service-enable-database')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const Key('service-config-dialog-database')),
+          matching: find.widgetWithText(FilledButton, 'Enable'),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(ssh.enableStarted, isTrue);
+      await catalog.selectServer(serverWithAlternateCredentials.id);
+      showServices.value = false;
+      await tester.pumpAndSettle();
+
+      ssh.enableCompleter!.complete();
+      await tester.pumpAndSettle();
+
+      final original = catalog.state.servers.firstWhere(
+        (item) => item.id == serverWithCredentials.id,
+      );
+      expect(original.serviceDatabaseEnabled, isTrue);
+      expect(
+        catalog.state.selectedServer?.id,
+        serverWithAlternateCredentials.id,
+      );
+      expect(catalog.state.selectedServer?.serviceDatabaseEnabled, isFalse);
+    },
+  );
+
   testWidgets('Service enable failures report the service event', (
     WidgetTester tester,
   ) async {

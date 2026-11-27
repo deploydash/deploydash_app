@@ -1106,7 +1106,7 @@ void main() {
               continuationToken: 'token-1',
             )
             .toString(),
-        'https://deploydash-backups.s3.us-east-1.amazonaws.com?list-type=2&prefix=sqlite%2Fbackups%2F&continuation-token=token-1',
+        'https://deploydash-backups.s3.us-east-1.amazonaws.com/?list-type=2&prefix=sqlite%2Fbackups%2F&continuation-token=token-1',
       );
       final parsedListResponse = service.debugParseListObjectsResponse(
         '<ListBucketResult>'
@@ -1189,7 +1189,7 @@ void main() {
               continuationToken: ' ',
             )
             .toString(),
-        'https://deploydash-backups.s3.example.com:9443?list-type=2&prefix=sqlite%2Fbackups%2F',
+        'https://deploydash-backups.s3.example.com:9443/?list-type=2&prefix=sqlite%2Fbackups%2F',
       );
       expect(
         service

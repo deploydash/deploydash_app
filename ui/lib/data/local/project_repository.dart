@@ -459,6 +459,9 @@ class ProjectRepository {
         _database.projectManagedDatabases,
       )..where((table) => table.projectId.equals(normalizedProjectId))).go();
       await (_database.delete(
+        _database.projectSqliteDatabases,
+      )..where((table) => table.projectId.equals(normalizedProjectId))).go();
+      await (_database.delete(
         _database.projectWorkspaceImportStates,
       )..where((table) => table.projectId.equals(normalizedProjectId))).go();
       await (_database.delete(

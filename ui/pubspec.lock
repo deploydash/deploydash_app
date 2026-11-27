@@ -13,8 +13,8 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: "15226081a7ddcbc2243d367113c246222b20bdf2"
-      resolved-ref: "15226081a7ddcbc2243d367113c246222b20bdf2"
+      ref: "9a4ad80db00d00cd6eda12c5bd1dad20a5bb46e6"
+      resolved-ref: "9a4ad80db00d00cd6eda12c5bd1dad20a5bb46e6"
       url: "https://github.com/deploydash/amplitude-flutter-desktop.git"
     source: git
     version: "4.7.1"

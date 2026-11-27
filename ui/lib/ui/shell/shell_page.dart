@@ -256,11 +256,7 @@ class _ShellPageState extends ConsumerState<ShellPage> {
           taskType: 'project',
         );
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Created project "${newProject.name}" for ${newProject.primaryDomain}',
-        ),
-      ),
+      SnackBar(content: Text('Created project "${newProject.name}".')),
     );
   }
 
@@ -269,6 +265,7 @@ class _ShellPageState extends ConsumerState<ShellPage> {
       _deletedProjectNotice = DeletedProjectNotice(
         projectName: outcome.projectName,
         warnings: outcome.messages,
+        retainedSqliteVolumes: outcome.retainedSqliteVolumes,
         completed: outcome.completed,
       );
     });

@@ -60,7 +60,7 @@ dependencies:
   amplitude_flutter:
     git:
       url: https://github.com/deploydash/amplitude-flutter-desktop.git
-      ref: 15226081a7ddcbc2243d367113c246222b20bdf2
+      ref: 9a4ad80db00d00cd6eda12c5bd1dad20a5bb46e6
   flutter_svg: ^2.3.0
   go_router: ^18.0.0
 

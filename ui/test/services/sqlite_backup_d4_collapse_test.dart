@@ -556,7 +556,7 @@ void main() {
 
       expect(
         service.debugBuildListRequestUri(config: aws).toString(),
-        'https://deploydash-backups.s3.us-east-1.amazonaws.com?$query',
+        'https://deploydash-backups.s3.us-east-1.amazonaws.com/?$query',
       );
       expect(
         service.debugBuildListRequestUri(config: awsPath).toString(),
@@ -564,7 +564,7 @@ void main() {
       );
       expect(
         service.debugBuildListRequestUri(config: custom).toString(),
-        'https://deploydash-backups.s3.example.test?$query',
+        'https://deploydash-backups.s3.example.test/?$query',
       );
       expect(
         service.debugBuildListRequestUri(config: customPath).toString(),
@@ -598,7 +598,7 @@ void main() {
       );
       expect(
         service.debugBuildListRequestUri(config: root).toString(),
-        'https://deploydash-backups.s3.us-east-1.amazonaws.com?list-type=2',
+        'https://deploydash-backups.s3.us-east-1.amazonaws.com/?list-type=2',
       );
     });
 
@@ -616,7 +616,7 @@ void main() {
 
       expect(
         service.debugBuildListRequestUri(config: messy).toString(),
-        'https://deploydash-backups.s3.us-east-1.amazonaws.com'
+        'https://deploydash-backups.s3.us-east-1.amazonaws.com/'
         '?list-type=2&prefix=sqlite%2Fbackups%2F',
       );
     });

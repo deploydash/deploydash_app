@@ -16,6 +16,7 @@ import '../../providers/telemetry_settings_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/sqlite_backup_service.dart';
 import '../../services/ssh_service.dart';
+import '../system/app_window_title.dart';
 import '../system/app_copy.dart';
 import '../system/app_context_navigation.dart';
 import '../system/app_dialogs.dart';
@@ -1211,15 +1212,20 @@ class _AppSettingsViewState extends ConsumerState<AppSettingsView> {
   @override
   Widget build(BuildContext context) {
     final activeThemeMode = ref.watch(themeProvider);
+    final title =
+        'App Settings - ${_destinations[_selectedDestinationIndex].label}';
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return AppWindowTitle(
+        screen: title,
+        child: const Center(child: CircularProgressIndicator()),
+      );
     }
     // Hoisted so the `!= null` checks below promote them.
     final agentServerError = _agentServerError;
     final agentAccessError = _agentAccessError;
     final passwordError = _passwordError;
 
-    return AppWorkspaceScaffold(
+    final workspace = AppWorkspaceScaffold(
       destinations: _destinations,
       selectedIndex: _selectedDestinationIndex,
       onSelected: _selectDestination,
@@ -1573,6 +1579,7 @@ class _AppSettingsViewState extends ConsumerState<AppSettingsView> {
         ],
       ),
     );
+    return AppWindowTitle(screen: title, child: workspace);
   }
 }
 

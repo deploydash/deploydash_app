@@ -278,6 +278,13 @@ server. If SSH or a remote cleanup step fails, the project is hidden from normal
 use and Home offers `Retry cleanup`. The local project catalog is retained until
 remote cleanup succeeds, unless the user explicitly confirms that Deploy Dash
 should remove only the local record while remote resources may remain.
+Project deletion preserves managed SQLite volumes on the server. The
+confirmation and Home result list their Docker volume names so you can
+identify the retained storage after the project disappears.
+
+A filesystem destination for PostgreSQL backups refers to an existing
+directory on the managed server. Use Test connection to verify it. Deploy Dash
+checks the directory again before saving an active schedule.
 
 Backup snapshots now also include embedded metadata in
 `deploydash_backup_metadata` (format version, created timestamp, source schema

@@ -565,8 +565,8 @@ class SqliteBackupService {
   /// shape and differ only in path vs query; one builder keeps the hosts from
   /// drifting apart. [objectKey] selects the object form (blank segments
   /// dropped); [queryParameters] selects the listing form. A null
-  /// [queryParameters] builds no query string, and a null [objectKey] builds
-  /// no key path, so each delegate's bytes are unchanged.
+  /// [queryParameters] builds no query string. Virtual-host bucket listings
+  /// explicitly sign the root path that the HTTP client sends.
   Uri _buildS3Uri({
     required SqliteBackupS3Config config,
     String? objectKey,
@@ -598,6 +598,7 @@ class SqliteBackupService {
         scheme: scheme,
         host: '${config.bucket}.$host',
         port: port,
+        path: keySegments == null ? '/' : null,
         pathSegments: keySegments,
         queryParameters: queryStrings,
       );
@@ -614,6 +615,7 @@ class SqliteBackupService {
     return Uri(
       scheme: 'https',
       host: '${config.bucket}.s3.${config.region}.amazonaws.com',
+      path: keySegments == null ? '/' : null,
       pathSegments: keySegments,
       queryParameters: queryStrings,
     );

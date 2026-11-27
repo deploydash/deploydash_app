@@ -58,23 +58,35 @@ class ProjectScreenVisitRepository {
     if (normalizedProjectId.isEmpty || normalizedDestinationId.isEmpty) {
       return;
     }
-    final pending =
-        await (_database.select(_database.projectDeletionRecoveryStates)
-              ..where((table) => table.projectId.equals(normalizedProjectId))
-              ..limit(1))
-            .getSingleOrNull();
-    if (pending != null) {
-      return;
-    }
-    await _database
-        .into(_database.projectScreenVisits)
-        .insertOnConflictUpdate(
-          ProjectScreenVisitsCompanion.insert(
-            projectId: normalizedProjectId,
-            destinationId: normalizedDestinationId,
-            visitedAt: Value(DateTime.now()),
-          ),
-        );
+    await _database.transaction(() async {
+      final projects = _database.projects;
+      final deletions = _database.projectDeletionRecoveryStates;
+      final available =
+          await (_database.selectOnly(projects).join([
+                  leftOuterJoin(
+                    deletions,
+                    deletions.projectId.equalsExp(projects.id),
+                  ),
+                ])
+                ..addColumns([projects.id])
+                ..where(
+                  projects.id.equals(normalizedProjectId) &
+                      deletions.projectId.isNull(),
+                ))
+              .getSingleOrNull();
+      if (available == null) {
+        return;
+      }
+      await _database
+          .into(_database.projectScreenVisits)
+          .insertOnConflictUpdate(
+            ProjectScreenVisitsCompanion.insert(
+              projectId: normalizedProjectId,
+              destinationId: normalizedDestinationId,
+              visitedAt: Value(DateTime.now()),
+            ),
+          );
+    });
   }
 
   /// The most recent visits, newest first, joined with their projects.

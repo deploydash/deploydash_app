@@ -218,15 +218,6 @@ class _AppDeploymentSummaryState extends ConsumerState<_AppDeploymentSummary>
     final failureEvidence = displayDeployStatus == GitHubDeployStatus.error
         ? selectedDeployState.failureEvidence
         : null;
-    final displayStatusMessage = activeDeployBelongsToProject
-        ? selectedDeployState.statusMessage
-        : activeDeployRunning
-        ? 'Another project is deploying. Return to that project to watch progress.'
-        : displayDeployStatus == GitHubDeployStatus.error
-        ? selectedDeployState.deployStatus == GitHubDeployStatus.error
-              ? selectedDeployState.statusMessage
-              : 'The last deployment did not complete. Review the deployment log and try again.'
-        : 'Ready to deploy this web app.';
     final publicHealth =
         liveSnapshot?.publicHealth ??
         const AppPublicHealthSnapshot(
@@ -294,6 +285,17 @@ class _AppDeploymentSummaryState extends ConsumerState<_AppDeploymentSummary>
             tlsValidationError: tlsValidationError,
             canDeploy: gitState.canDeployForProject(projectId),
           );
+    final displayStatusMessage = activeDeployBelongsToProject
+        ? selectedDeployState.statusMessage
+        : activeDeployRunning
+        ? 'Another project is deploying. Return to that project to watch progress.'
+        : displayDeployStatus == GitHubDeployStatus.error
+        ? selectedDeployState.deployStatus == GitHubDeployStatus.error
+              ? selectedDeployState.statusMessage
+              : 'The last deployment did not complete. Review the deployment log and try again.'
+        : deployDisabledReason == null
+        ? 'Ready to deploy this web app.'
+        : null;
     final hasValidationErrors = deployDisabledReason != null;
     final runtimeActionInFlight = projectId == null
         ? false
@@ -601,7 +603,7 @@ class _AppDeploymentSummaryState extends ConsumerState<_AppDeploymentSummary>
                       gitState: gitState,
                       onCopyAuthorizationUrl: _copyGitHubAuthorizationUrl,
                     ),
-                  if (isRepoSelected) ...[
+                  if (isRepoSelected && displayStatusMessage != null) ...[
                     const SizedBox(height: 10),
                     Text(
                       displayStatusMessage,

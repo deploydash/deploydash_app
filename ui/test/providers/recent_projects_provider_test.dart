@@ -495,6 +495,44 @@ void main() {
       },
     );
 
+    test('removal wins over a pending visit and an old refresh', () async {
+      final repository = _StubVisitRepository([
+        _visit(
+          projectId: 'deleted',
+          destinationId: 'web-app',
+          visitedAt: DateTime.utc(2026, 8, 12),
+        ),
+        _visit(
+          projectId: 'kept',
+          destinationId: 'backup',
+          visitedAt: DateTime.utc(2026, 8, 11),
+        ),
+      ]);
+      final container = buildContainer([], repository: repository);
+      final notifier = container.read(recentProjectVisitsProvider.notifier);
+      await notifier.refresh();
+
+      final pendingVisit = notifier.recordVisit(
+        projectId: 'deleted',
+        destinationId: 'database',
+      );
+      final pendingRefresh = notifier.refresh();
+      notifier.removeProject('deleted');
+      await pendingVisit;
+      await pendingRefresh;
+      await notifier.recordVisit(
+        projectId: 'deleted',
+        destinationId: 'settings',
+      );
+
+      expect(notifier.rawVisits.map((visit) => visit.projectId), ['kept']);
+      expect(
+        container.read(recentProjectGroupsProvider).single.projectId,
+        'kept',
+      );
+      expect(repository.recordedVisits, ['deleted/database']);
+    });
+
     test('keeps the recents list empty when the database fails', () async {
       final failingRecorder = _StubVisitRepository(
         const <ProjectScreenVisitRecord>[],

@@ -329,7 +329,7 @@ class _SchedulerSummaryState extends ConsumerState<_SchedulerSummary>
                               (task) => <String, dynamic>{
                                 'task_id': task.id,
                                 'target_type': task.targetType,
-                                'target_ref': task.targetRef,
+                                'target_ref': ?task.targetRef,
                                 'command': task.command,
                               },
                             )
@@ -455,11 +455,11 @@ class _SchedulerSummaryState extends ConsumerState<_SchedulerSummary>
         'task_id': draft.id,
         'name': draft.name,
         'target_type': draft.targetType,
-        'target_ref': draft.targetRef,
+        'target_ref': ?draft.targetRef,
         'command': draft.command,
         'schedule_type': draft.scheduleType,
-        'interval_value': draft.intervalValue,
-        'daily_time': draft.dailyTime,
+        'interval_value': ?draft.intervalValue,
+        'daily_time': ?draft.dailyTime,
         'enabled': draft.enabled,
       };
       final journaled = await _runJournaledProjectWorkflow(
@@ -893,7 +893,7 @@ class _SchedulerSummaryState extends ConsumerState<_SchedulerSummary>
           task.command.trim().isNotEmpty) {
         settings.addAll(<String, dynamic>{
           'target_type': task.targetType,
-          'target_ref': task.targetRef,
+          'target_ref': ?task.targetRef,
           'command': task.command,
         });
       }
@@ -1375,10 +1375,21 @@ class _SchedulerSummaryState extends ConsumerState<_SchedulerSummary>
       );
     }
 
+    final errorMessage = error == null
+        ? null
+        : Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text(
+              error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          );
+
     if (customTasks.isEmpty && managedTasks.isEmpty && runs.isEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          ?errorMessage,
           if (!hasAppRuntime) ...[
             _ProjectAppRuntimeRequiredCallout(
               key: const Key('scheduler-app-runtime-required-callout'),
@@ -1468,13 +1479,7 @@ class _SchedulerSummaryState extends ConsumerState<_SchedulerSummary>
             onOpenWebAppTab: widget.onOpenWebAppTab,
           ),
         ],
-        if (error != null) ...[
-          const SizedBox(height: 10),
-          Text(
-            error,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
-          ),
-        ],
+        ?errorMessage,
         const SizedBox(height: 14),
         Text(
           schedulerCustomSectionTitle(),

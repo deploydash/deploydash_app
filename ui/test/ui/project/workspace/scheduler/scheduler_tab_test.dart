@@ -75,6 +75,8 @@ class _SchedulerWorkflowSshService extends LegacySshService {
   });
 
   Completer<void>? taskStatusCompleter;
+  Map<String, dynamic>? savedSettings;
+  Map<String, dynamic>? runNowSettings;
   final Map<String, dynamic>? taskUpsertResponse;
   final Map<String, dynamic>? taskRunNowResponse;
   final Map<String, dynamic>? taskDeleteResponse;
@@ -104,10 +106,12 @@ class _SchedulerWorkflowSshService extends LegacySshService {
       };
     }
     if (workflowId == 'scheduler' && operationId == 'task_upsert') {
+      savedSettings = params?['settings'] as Map<String, dynamic>?;
       return taskUpsertResponse ??
           const <String, dynamic>{'status': 'success', 'msg': 'Task saved.'};
     }
     if (workflowId == 'scheduler' && operationId == 'task_run_now') {
+      runNowSettings = params?['settings'] as Map<String, dynamic>?;
       return taskRunNowResponse ??
           const <String, dynamic>{'status': 'success', 'msg': 'Task started.'};
     }
@@ -417,11 +421,8 @@ void main() {
     WidgetTester tester,
   ) async {
     final analytics = FakeAnalyticsService();
-    await _pumpSchedulerTab(
-      tester,
-      sshService: _SchedulerWorkflowSshService(),
-      analytics: analytics,
-    );
+    final ssh = _SchedulerWorkflowSshService();
+    await _pumpSchedulerTab(tester, sshService: ssh, analytics: analytics);
 
     await tester.tap(find.byKey(const Key('scheduler-add-task-button')));
     await tester.pumpAndSettle();
@@ -439,6 +440,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('scheduler-editor-save-button')));
     await tester.pumpAndSettle();
+
+    expect(ssh.savedSettings, containsPair('target_type', 'web_app'));
+    expect(ssh.savedSettings!.containsKey('target_ref'), isFalse);
+    expect(ssh.savedSettings!.containsKey('daily_time'), isFalse);
+    expect(ssh.savedSettings, containsPair('interval_value', 5));
 
     expect(analytics.schedulerEvents, [
       (action: SchedulerAction.create, outcome: DataOperationOutcome.success),
@@ -474,6 +480,7 @@ void main() {
     await tester.tap(find.byKey(const Key('scheduler-editor-save-button')));
     await tester.pumpAndSettle();
 
+    expect(find.text(_schedulerErrorResponse['msg'] as String), findsOneWidget);
     expect(analytics.schedulerEvents, [
       (action: SchedulerAction.create, outcome: DataOperationOutcome.failure),
     ]);
