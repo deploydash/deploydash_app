@@ -25,10 +25,11 @@ from pathlib import Path
 markers = {
     "lib/ui/startup/database_unlock_gate.dart": (
         "database-passphrase-field",
-        "database-confirm-passphrase-field",
         "identifier: isRestoreMode",
     ),
     "lib/ui/server/server_onboarding_view.dart": (
+        "database-passphrase-field",
+        "database-confirm-passphrase-field",
         "server-name-field",
         "server-host-field",
         "server-user-field",
@@ -57,11 +58,8 @@ exact_runtime_markers = {
     ),
     "lib/ui/startup/database_unlock_gate.dart": (
         "_passphraseFocusNode.dispose();",
-        "_confirmPassphraseFocusNode.dispose();",
         "focusNode: _passphraseFocusNode,",
-        "_confirmPassphraseFocusNode.requestFocus();",
-        "focusNode: _confirmPassphraseFocusNode,",
-        "return AppWindowTitle(",
+        "screen: windowScreen,",
     ),
     # The credential-step focus nodes live in `_CredentialFields` under
     # non-underscored names (serverNameFocus, hostFocus, ...); the previous
@@ -70,6 +68,11 @@ exact_runtime_markers = {
     # still proves disposal, focus wiring, submit traversal, and the final
     # connection-check submit all run.
     "lib/ui/server/server_onboarding_view.dart": (
+        "_passphraseFocusNode.dispose();",
+        "_confirmPassphraseFocusNode.dispose();",
+        "focusNode: widget.passphraseFocusNode,",
+        "widget.confirmPassphraseFocusNode.requestFocus(),",
+        "focusNode: widget.confirmPassphraseFocusNode,",
         "serverNameFocus.dispose();",
         "hostFocus.dispose();",
         "portFocus.dispose();",
