@@ -442,21 +442,25 @@ grep -q "^[[:space:]]*winmac_only: \${{ needs\.version\.outputs\.winmac_only" "$
 grep -q "^[[:space:]]*if:[^#]*winmac_only != 'true'" "${GIT_ROOT}/.github/workflows/release.yml"
 grep -q "^[[:space:]]*if:[^#]*needs\.ubuntu-deb\.result == 'success' || inputs\.winmac_only" "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
 grep -q 'has_msix' "${GIT_ROOT}/.github/workflows/release.yml"
-grep -q 'slim-macos' "${GIT_ROOT}/.github/workflows/release.yml"
-grep -q 'skip_macos' "${GIT_ROOT}/.github/workflows/release.yml"
-grep -q 'macOS slim QA (hosted)' "${GIT_ROOT}/.github/workflows/release.yml"
+awk '
+  /^  [a-zA-Z0-9_-]+:/ { in_macos = ($0 ~ /^  slim-macos:/) }
+  in_macos && /^    uses: \.\/\.github\/workflows\/qa-public-macos-slim\.yml([[:space:]]|$)/ { found = 1 }
+  END { exit !found }
+' "${GIT_ROOT}/.github/workflows/release.yml"
+awk '
+  /^  [a-zA-Z0-9_-]+:/ { in_handoff = ($0 ~ /^  handoff:/) }
+  in_handoff && /^[[:space:]]+-f client_payload\[skip_macos\]=.*needs\.slim-macos\.result == .success./ { found = 1 }
+  END { exit !found }
+' "${GIT_ROOT}/.github/workflows/release.yml"
 if grep -q 'list-keychains -d user -s "${KEYCHAIN_PATH}"$' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"; then
   echo "macos-dmg must append its keychain to the existing search list, not replace it (replacing hides the login-keychain Developer ID intermediate and breaks codesign)." >&2
   exit 1
 fi
-macos_selfhosted="$(
-  awk '
-    /^  macos-dmg:/ { in_macos=1; next }
-    /^  [a-zA-Z0-9_-]+:/ { in_macos=0 }
-    in_macos && /self-hosted/ && !/^ *#/ { print; exit }
-  ' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"
-)"
-if [[ -n "${macos_selfhosted}" ]]; then
+if ! awk '
+  /^  [a-zA-Z0-9_-]+:/ { in_macos = ($0 ~ /^  macos-dmg:/) }
+  in_macos && /^    runs-on:[[:space:]]+macos-15([[:space:]]*#.*|[[:space:]]*)$/ { hosted = 1 }
+  END { exit !hosted }
+' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"; then
   echo "macos-dmg must run on hosted macos-15, not a self-hosted runner (the desk Mac is fallback-only; see the job comment)." >&2
   exit 1
 fi
