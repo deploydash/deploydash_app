@@ -541,6 +541,26 @@ void main() {
       skip: !sqliteAvailable,
     );
 
+    test('identifies retained current and legacy SQLite volumes', () async {
+      final repository = ProjectSqliteDatabaseRepository(database);
+      const managedVolume = 'deploydash_sqlite_current';
+      await repository.upsert(
+        const ProjectSqliteDatabase(
+          id: 'sqlite-current',
+          projectId: 'project-1',
+          name: 'Current',
+          volumeName: managedVolume,
+          mountPath: '/var/lib/deploydash/sqlite',
+          fileName: 'app.sqlite3',
+        ),
+      );
+      final outcome = await coordinator.start(
+        project: _projectRecord.copyWith(sqliteVolumeName: 'sqlite_legacy'),
+        server: _server,
+      );
+      expect(outcome.retainedSqliteVolumes, [managedVolume, 'sqlite_legacy']);
+    }, skip: !sqliteAvailable);
+
     test('provider constructs coordinator from repository dependencies', () {
       final container = ProviderContainer(
         overrides: [

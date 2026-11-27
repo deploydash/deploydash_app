@@ -436,6 +436,33 @@ void main() {
       );
     });
 
+    testWidgets('Settings tab stops when retained storage cannot be read', (
+      WidgetTester tester,
+    ) async {
+      final database = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+      await pumpProjectWorkspace(
+        tester,
+        database: database,
+        child: const ProjectWorkspace(initialTabIndex: 8),
+        overrides: [
+          selectedProjectProvider.overrideWithValue(selectedProject),
+          projectSqliteDatabaseRepositoryProvider.overrideWithValue(
+            _FailingSqliteInventory(database),
+          ),
+        ],
+      );
+
+      await tester.tap(find.byKey(const Key('settings-delete-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('settings-delete-confirm-dialog')),
+        findsNothing,
+      );
+      expect(find.textContaining('read SQLite storage'), findsOneWidget);
+    }, skip: !sqliteAvailable);
+
     testWidgets('Settings tab delete dialog cancel leaves project untouched', (
       WidgetTester tester,
     ) async {
@@ -768,4 +795,13 @@ void main() {
       },
     );
   }, skip: !sqliteAvailable);
+}
+
+class _FailingSqliteInventory extends ProjectSqliteDatabaseRepository {
+  _FailingSqliteInventory(super.database);
+
+  @override
+  Future<List<ProjectSqliteDatabase>> listForProject(String projectId) async {
+    throw StateError('fixture inventory failed');
+  }
 }

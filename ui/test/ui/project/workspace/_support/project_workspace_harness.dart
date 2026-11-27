@@ -802,6 +802,7 @@ class DatabaseWorkflowSshService extends LegacySshService {
   final Map<String, Map<String, dynamic>> postgresOperationResponses;
   final Map<String, List<Map<String, dynamic>>> operationEvents;
   final Set<String> throwingOperations;
+  Future<Map<String, dynamic>>? destinationTestResponse;
   final List<Map<String, dynamic>> callLog = <Map<String, dynamic>>[];
 
   int countCalls(String workflowId, String operationId) {
@@ -837,6 +838,12 @@ class DatabaseWorkflowSshService extends LegacySshService {
     }
     if (workflowId == 'postgres' && operationId == 'project_list') {
       return projectListResponse;
+    }
+    if (workflowId == 'postgres' && operationId == 'backup_destination_test') {
+      final response = destinationTestResponse;
+      if (response != null) {
+        return response;
+      }
     }
     if (workflowId == 'postgres' && throwingOperations.contains(operationId)) {
       throw StateError('$operationId unavailable');
