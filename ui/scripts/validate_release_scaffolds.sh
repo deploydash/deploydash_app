@@ -458,7 +458,7 @@ if grep -q 'list-keychains -d user -s "${KEYCHAIN_PATH}"$' "${GIT_ROOT}/.github/
 fi
 if ! awk '
   /^  [a-zA-Z0-9_-]+:/ { in_macos = ($0 ~ /^  macos-dmg:/) }
-  in_macos && /^    runs-on:/ { hosted = /^    runs-on:[[:space:]]+macos-15([[:space:]]*#.*|[[:space:]]*)$/ }
+  in_macos && /^    runs-on:[[:space:]]+macos-15([[:space:]]*#.*|[[:space:]]*)$/ { hosted = 1 }
   END { exit !hosted }
 ' "${GIT_ROOT}/.github/workflows/desktop-direct-builds.yml"; then
   echo "macos-dmg must run on hosted macos-15, not a self-hosted runner (the desk Mac is fallback-only; see the job comment)." >&2
