@@ -28,9 +28,9 @@ on:
         default: false
     secrets:
       DEPLOYDASH_GITHUB_CLIENT_ID:
-        required: false
+        required: true
       DEPLOYDASH_GITHUB_CLIENT_SECRET:
-        required: false
+        required: true
       DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK:
         required: false
       DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE:
@@ -105,6 +105,15 @@ jobs:
         with:
           python-version: "3.13.14"
 
+      - name: Validate GitHub OAuth and create CI Dart defines
+        uses: ./.github/actions/ci-dart-defines
+        with:
+          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
+          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
+          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
+          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
+          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
+
       - name: Set up Flutter
         uses: ./.github/actions/setup-flutter
 
@@ -127,15 +136,6 @@ jobs:
         run: |
           BACKEND_ROOT="${DEPLOYDASH_ORCHESTRATOR_ROOT:-orchestrator}"
           python3 "${BACKEND_ROOT}/scripts/resolve_build_metadata.py"
-
-      - name: Create optional CI Dart defines
-        uses: ./.github/actions/ci-dart-defines
-        with:
-          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
-          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
-          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
-          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
-          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
 
       - name: Build Ubuntu .deb
         shell: bash
@@ -229,6 +229,15 @@ jobs:
             exit 1
           fi
           echo "$(dirname "${uv_python}")" >> "${GITHUB_PATH}"
+
+      - name: Validate GitHub OAuth and create CI Dart defines
+        uses: ./.github/actions/ci-dart-defines
+        with:
+          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
+          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
+          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
+          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
+          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
 
       - name: Resolve build metadata
         shell: bash
@@ -335,15 +344,6 @@ jobs:
           done < "${KEYCHAIN_LIST_BEFORE}"
           security list-keychains -d user -s "${KEYCHAIN_PATH}" "${existing_keychains[@]}"
           security find-identity -v -p codesigning
-
-      - name: Create optional CI Dart defines
-        uses: ./.github/actions/ci-dart-defines
-        with:
-          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
-          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
-          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
-          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
-          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
 
       - name: Build signed, notarized, and stapled macOS DMG
         shell: bash
@@ -460,6 +460,15 @@ jobs:
         with:
           python-version: "3.13.14"
 
+      - name: Validate GitHub OAuth and create CI Dart defines
+        uses: ./.github/actions/ci-dart-defines
+        with:
+          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
+          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
+          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
+          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
+          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
+
       - name: Set up Flutter
         uses: ./.github/actions/setup-flutter
 
@@ -474,15 +483,6 @@ jobs:
         run: |
           BACKEND_ROOT="${DEPLOYDASH_ORCHESTRATOR_ROOT:-orchestrator}"
           python3 "${BACKEND_ROOT}/scripts/resolve_build_metadata.py"
-
-      - name: Create optional CI Dart defines
-        uses: ./.github/actions/ci-dart-defines
-        with:
-          github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
-          github-client-secret: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_SECRET }}
-          show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
-          github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
-          amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
 
       - name: Build unsigned Partner Center submission
         shell: pwsh

@@ -13,9 +13,9 @@ on:
         type: string
     secrets:
       DEPLOYDASH_GITHUB_CLIENT_ID:
-        required: false
+        required: true
       DEPLOYDASH_GITHUB_CLIENT_SECRET:
-        required: false
+        required: true
       DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK:
         required: false
       DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE:
@@ -56,14 +56,7 @@ jobs:
           echo "::add-mask::${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}"
           echo "::add-mask::${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}"
 
-      - name: Install Snapcraft build dependencies
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools
-          sudo snap install snapcraft --classic
-
-      - name: Create optional CI Dart defines
+      - name: Validate GitHub OAuth and create CI Dart defines
         uses: ./.github/actions/ci-dart-defines
         with:
           github-client-id: ${{ secrets.DEPLOYDASH_GITHUB_CLIENT_ID }}
@@ -71,6 +64,13 @@ jobs:
           show-manual-github-callback: ${{ secrets.DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK }}
           github-enable-deploy-key-write: ${{ secrets.DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE }}
           amplitude-api-key: ${{ secrets.DEPLOYDASH_AMPLITUDE_API_KEY }}
+
+      - name: Install Snapcraft build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools
+          sudo snap install snapcraft --classic
 
       - name: Build and lint Snap
         shell: bash

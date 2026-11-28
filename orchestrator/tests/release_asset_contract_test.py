@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -38,6 +39,63 @@ class ReleaseAssetContractTest(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn("build_name=1.2.0", output.read_text().splitlines())
                     self.assertIn(f"build_number={expected}", output.read_text().splitlines())
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires POSIX Bash")
+    def test_ci_dart_defines_require_both_github_oauth_inputs(self):
+        root = Path(__file__).resolve().parents[2]
+        action = (root / ".github/actions/ci-dart-defines/action.yml").read_text()
+        script = textwrap.dedent(action.split("\n      run: |\n", 1)[1])
+        client_id = "DEPLOYDASH_GITHUB_CLIENT_ID"
+        client_secret = "DEPLOYDASH_GITHUB_CLIENT_SECRET"
+
+        for label, oauth, missing in (
+            ("neither supplied", {}, (client_id, client_secret)),
+            ("missing client ID", {client_secret: "fixture-secret"}, (client_id,)),
+            ("missing client secret", {client_id: "fixture-id"}, (client_secret,)),
+            (
+                "whitespace only",
+                {client_id: "fixture-id", client_secret: " \t"},
+                (client_secret,),
+            ),
+            (
+                "both supplied",
+                {client_id: "fixture-id", client_secret: "fixture-secret"},
+                (),
+            ),
+        ):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                workspace = Path(temp)
+                output = workspace / "ui/config/dart-defines.ci.json"
+                output.parent.mkdir(parents=True)
+                github_env = workspace / "github-env"
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", script],
+                    cwd=workspace,
+                    env={
+                        "GITHUB_ENV": str(github_env),
+                        "GITHUB_WORKSPACE": str(workspace),
+                        **oauth,
+                    },
+                    capture_output=True,
+                    text=True,
+                )
+                logs = result.stdout + result.stderr
+                self.assertNotIn("fixture-id", logs)
+                self.assertNotIn("fixture-secret", logs)
+                if missing:
+                    self.assertEqual(result.returncode, 1, logs)
+                    for name in missing:
+                        self.assertIn(f"::error::{name} is required", logs)
+                    self.assertFalse(output.exists())
+                    self.assertFalse(github_env.exists())
+                else:
+                    self.assertEqual(result.returncode, 0, logs)
+                    defines = json.loads(output.read_text())
+                    self.assertEqual({name: defines[name] for name in oauth}, oauth)
+                    self.assertIn("GitHub OAuth build inputs are set.", logs)
+                    self.assertEqual(
+                        github_env.read_text(), f"DEPLOYDASH_DART_DEFINES_FILE={output}\n"
+                    )
 
     def test_linux_release_builds_both_architectures_with_stable_artifact_names(self):
         """The website can resolve Linux x64 and arm64 only if both are built distinctly."""

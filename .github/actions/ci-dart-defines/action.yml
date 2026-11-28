@@ -1,4 +1,4 @@
-name: Create optional CI Dart defines
+name: Validate GitHub OAuth and create CI Dart defines
 description: >
   Write ui/config/dart-defines.ci.json from the CI-consumed secrets and
   export its absolute path as DEPLOYDASH_DART_DEFINES_FILE. Single owner of
@@ -10,12 +10,10 @@ description: >
 inputs:
   github-client-id:
     description: DEPLOYDASH_GITHUB_CLIENT_ID secret value.
-    required: false
-    default: ""
+    required: true
   github-client-secret:
     description: DEPLOYDASH_GITHUB_CLIENT_SECRET secret value.
-    required: false
-    default: ""
+    required: true
   show-manual-github-callback:
     description: DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK secret value.
     required: false
@@ -32,7 +30,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Create optional CI Dart defines
+    - name: Validate GitHub OAuth and create CI Dart defines
       shell: bash
       env:
         DEPLOYDASH_GITHUB_CLIENT_ID: ${{ inputs.github-client-id }}
@@ -41,23 +39,26 @@ runs:
         DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE: ${{ inputs.github-enable-deploy-key-write }}
         DEPLOYDASH_AMPLITUDE_API_KEY: ${{ inputs.amplitude-api-key }}
       run: |
-        if [[ -z "${DEPLOYDASH_GITHUB_CLIENT_ID}${DEPLOYDASH_GITHUB_CLIENT_SECRET}${DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK}${DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE}${DEPLOYDASH_AMPLITUDE_API_KEY}" ]]; then
-          exit 0
-        fi
         python3 - <<'PY'
         import json
         import os
         from pathlib import Path
 
+        oauth_names = ("DEPLOYDASH_GITHUB_CLIENT_ID", "DEPLOYDASH_GITHUB_CLIENT_SECRET")
+        missing = [name for name in oauth_names if not os.environ.get(name, "").strip()]
+        if missing:
+            for name in missing:
+                print(f"::error::{name} is required for GitHub Actions desktop builds.")
+            raise SystemExit(1)
+
         payload = {
-            "DEPLOYDASH_GITHUB_CLIENT_ID": os.environ.get("DEPLOYDASH_GITHUB_CLIENT_ID", ""),
-            "DEPLOYDASH_GITHUB_CLIENT_SECRET": os.environ.get("DEPLOYDASH_GITHUB_CLIENT_SECRET", ""),
+            **{name: os.environ[name] for name in oauth_names},
             "DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK": os.environ.get("DEPLOYDASH_SHOW_MANUAL_GITHUB_CALLBACK", "false") or "false",
             "DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE": os.environ.get("DEPLOYDASH_GITHUB_ENABLE_DEPLOY_KEY_WRITE", "false") or "false",
             "DEPLOYDASH_AMPLITUDE_API_KEY": os.environ.get("DEPLOYDASH_AMPLITUDE_API_KEY", ""),
         }
         output = Path("ui/config/dart-defines.ci.json")
         output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        print(output.resolve())
+        print("GitHub OAuth build inputs are set.")
         PY
         echo "DEPLOYDASH_DART_DEFINES_FILE=${GITHUB_WORKSPACE}/ui/config/dart-defines.ci.json" >> "${GITHUB_ENV}"

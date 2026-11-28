@@ -522,8 +522,11 @@ Current behavior:
 - attaches one `SHA256SUMS`, generated only after all six architecture
   legs succeed, covering the two `.deb` files, two DMGs, two private
   `.msixupload` candidates, and their two build manifests
-- supports an optional CI Dart defines file through repository secrets, but can
-  build without it for direct artifact generation
+- requires the Actions secrets `DEPLOYDASH_GITHUB_CLIENT_ID` and
+  `DEPLOYDASH_GITHUB_CLIENT_SECRET` for GitHub Actions desktop packaging,
+  including Snap. A shared step checks both values before packaging and logs
+  only whether they are present. Local builds use the ignored Dart defines
+  file when configured.
 - imports macOS signing material into a temporary keychain and removes it after
   the job; Windows Store candidates do not use repository signing secrets
 
