@@ -460,6 +460,25 @@ class TestRunnerMain(unittest.TestCase):
             self.assertEqual(runner.main(), 1)
             self.assertEqual(json.loads(output.getvalue())["code"], "ENGINE_INVALID_JSON")
 
+    def test_cli_does_not_echo_unrecognized_fields_in_validation_errors(self):
+        payload = json.dumps(
+            {
+                "action": "run_workflow",
+                "workflow_id": "server",
+                "operation_id": "check",
+                "unrecognized-fixture-field": "fixture-value",
+            }
+        )
+        with (
+            patch.object(sys, "argv", ["runner.py", "run-payload", "--payload", payload]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(runner.main(), 1)
+            self.assertNotIn("unrecognized-fixture-field", output.getvalue())
+            self.assertEqual(
+                json.loads(output.getvalue())["msg"], "payload contains an unrecognized field."
+            )
+
     @patch("orchestrator.api.get_default_runtime", return_value=None)
     def test_cli_reports_unconfigured_runtime(self, _get_default_runtime):
         with (
