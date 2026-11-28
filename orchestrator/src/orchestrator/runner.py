@@ -5,6 +5,7 @@ from pathlib import Path
 from . import engine as _engine_bootstrap  # noqa: F401
 from . import settings_ownership
 from .api import handle_request
+from .log_sanitizer import sanitize_data
 from .setup_parts import ALL_PARTS, CANONICAL_SETUP_SETTINGS
 
 
@@ -256,10 +257,7 @@ def _build_payload(args, target):
 
 
 def _print_json(data, pretty=False):
-    if pretty:
-        print(json.dumps(data, indent=2))
-        return
-    print(json.dumps(data))
+    print(json.dumps(sanitize_data(data, strip_text=False), indent=2 if pretty else None))
 
 
 def main():

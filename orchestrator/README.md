@@ -423,6 +423,8 @@ Current backend-managed runtime defaults include:
 
 The package exposes `orchestrator` via `orchestrator.runner:main`.
 
+CLI JSON output masks credentials, including generated PostgreSQL passwords.
+
 Available top-level commands:
 
 - `echo`

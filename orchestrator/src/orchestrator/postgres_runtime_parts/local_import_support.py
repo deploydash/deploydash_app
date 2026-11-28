@@ -326,7 +326,6 @@ def _upload_local_sql_import_file(
         needs_sudo=False,
     )
     known_hosts_file = connector_data.get("ssh_known_hosts_file")
-    strict_host_key = str(connector_data.get("ssh_strict_host_key_checking") or "").strip().lower()
     connect_timeout = int(os.getenv("DEPLOYDASH_SSH_CONNECT_TIMEOUT", "4") or "4")
     connect_kwargs = {
         "hostname": ip,
@@ -346,17 +345,6 @@ def _upload_local_sql_import_file(
     if isinstance(paramiko_kwargs, dict):
         connect_kwargs.update(paramiko_kwargs)
 
-    client = paramiko.SSHClient()
-    with contextlib.suppress(Exception):
-        client.load_system_host_keys()
-    if isinstance(known_hosts_file, str) and known_hosts_file:
-        with contextlib.suppress(Exception):
-            client.load_host_keys(known_hosts_file)
-    if strict_host_key in {"yes", "true", "on"}:
-        client.set_missing_host_key_policy(paramiko.RejectPolicy())
-    else:
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
     size_bytes = os.path.getsize(local_path)
     bytes_uploaded = 0
     last_progress_mark = 0
@@ -371,16 +359,18 @@ def _upload_local_sql_import_file(
         },
     )
 
+    client = paramiko.SSHClient()
     try:
+        # The managed connection has already established trust. Require its
+        # saved host key before the separate upload connection sends credentials.
+        # coverage-gate: upload_trusted_host
+        if known_hosts_file:
+            client.load_host_keys(known_hosts_file)
+        else:
+            client.load_system_host_keys()
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        # end coverage-gate
         client.connect(**connect_kwargs)
-        if (
-            strict_host_key == "accept-new"
-            and isinstance(known_hosts_file, str)
-            and known_hosts_file
-        ):
-            with contextlib.suppress(Exception):
-                client.save_host_keys(known_hosts_file)
-
         sftp = client.open_sftp()
         try:
             # coverage-gate: upload_staging_mkdir

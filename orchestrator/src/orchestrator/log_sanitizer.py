@@ -19,8 +19,8 @@ _SENSITIVE_IDENTIFIER_RE = (
     r"[A-Za-z0-9_-]*"
 )
 _SENSITIVE_FIELD_RE = re.compile(
-    r"""((?:(?<=\W)|^)(?:["']?(?:%s)["']?)\s*[:=]\s*)(["']?)([^"'\s,\)\]}]+)\2"""  # noqa: UP031
-    % _SENSITIVE_IDENTIFIER_RE,
+    r"""((?:(?<=\W)|^)(?:["']?(?:%s)["']?)\s*[:=]\s*)"""  # noqa: UP031
+    r"""("(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^"'\s,\)\]}]+)""" % _SENSITIVE_IDENTIFIER_RE,
     re.IGNORECASE,
 )
 _URI_CREDENTIAL_RE = re.compile(
@@ -48,10 +48,9 @@ _AUTHORIZATION_HEADER_RE = re.compile(
 
 
 def _mask_sensitive_field(match):
-    prefix, quote, _ = match.groups()
-    if quote:
-        return f"{prefix}{quote}***{quote}"
-    return f"{prefix}***"
+    prefix, value = match.groups()
+    quote = value[0] if value.startswith(('"', "'")) else ""
+    return f"{prefix}{quote}***{quote}"
 
 
 def _mask_authorization_header(match):
@@ -79,7 +78,7 @@ def normalize_log_text(message):
     return _UNSAFE_CONTROL_RE.sub("", without_ansi)
 
 
-def sanitize_text(message):
+def sanitize_text(message, *, strip=True):
     cleaned = normalize_log_text(message)
     cleaned = _PRIVATE_KEY_BLOCK_RE.sub("***", cleaned)
     cleaned = _AUTHORIZATION_HEADER_RE.sub(_mask_authorization_header, cleaned)
@@ -90,10 +89,10 @@ def sanitize_text(message):
     )
     cleaned = _ENV_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=***", cleaned)
     cleaned = _URI_CREDENTIAL_RE.sub(r"\1***\3", cleaned)
-    return cleaned.strip()
+    return cleaned.strip() if strip else cleaned
 
 
-def sanitize_data(value):
+def sanitize_data(value, *, strip_text=True):
     if isinstance(value, dict):
         sanitized = {}
         for key, item in value.items():
@@ -103,16 +102,16 @@ def sanitize_data(value):
             if _SENSITIVE_KEY_RE.search(str(key)):
                 sanitized[key] = "***"
                 continue
-            sanitized[key] = sanitize_data(item)
+            sanitized[key] = sanitize_data(item, strip_text=strip_text)
         return sanitized
 
     if isinstance(value, list):
-        return [sanitize_data(item) for item in value]
+        return [sanitize_data(item, strip_text=strip_text) for item in value]
 
     if isinstance(value, tuple):
-        return tuple(sanitize_data(item) for item in value)
+        return tuple(sanitize_data(item, strip_text=strip_text) for item in value)
 
     if isinstance(value, str):
-        return sanitize_text(value)
+        return sanitize_text(value, strip=strip_text)
 
     return value

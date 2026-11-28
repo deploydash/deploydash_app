@@ -3,6 +3,8 @@ import sys
 import tempfile
 import unittest
 from argparse import Namespace
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -397,6 +399,63 @@ class TestRunnerDispatch(unittest.TestCase):
 
 
 class TestRunnerMain(unittest.TestCase):
+    @patch("runner.handle_request")
+    def test_cli_masks_generated_passwords_in_pretty_and_compact_output(self, handle_request):
+        handle_request.return_value = json.dumps(
+            {
+                "status": "success",
+                "database": {
+                    "password": "fictional-database-password",
+                    "connection_uri": "postgresql://alice:fictional-database-password@db/example",
+                },
+                "result": ["  ordinary text  ", 12],
+            }
+        )
+        for formatting in ([], ["--pretty"]):
+            with (
+                self.subTest(formatting=formatting),
+                patch.object(
+                    sys, "argv", ["runner.py", "run-payload", "--payload", "{}", *formatting]
+                ),
+                redirect_stdout(StringIO()) as output,
+            ):
+                self.assertEqual(runner.main(), 0)
+                self.assertNotIn("fictional-database-password", output.getvalue())
+                parsed = json.loads(output.getvalue())
+                self.assertEqual(parsed["database"]["password"], "***")
+                self.assertEqual(
+                    parsed["database"]["connection_uri"], "postgresql://alice:***@db/example"
+                )
+                self.assertEqual(parsed["result"], ["  ordinary text  ", 12])
+
+    @patch("runner.handle_request")
+    def test_cli_masks_quoted_ssh_passwords_in_diagnostics(self, handle_request):
+        handle_request.return_value = json.dumps(
+            {
+                "status": "error",
+                "msg": "SSH authentication failed (password='four fictional words')",
+            }
+        )
+        with (
+            patch.object(sys, "argv", ["runner.py", "run-payload", "--payload", "{}"]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(runner.main(), 1)
+        self.assertEqual(
+            json.loads(output.getvalue())["msg"],
+            "SSH authentication failed (password='***')",
+        )
+
+    def test_invalid_action_is_not_echoed_into_cli_output(self):
+        payload = json.dumps({"action": "fictional-unrecognized-action"})
+        with (
+            patch.object(sys, "argv", ["runner.py", "run-payload", "--payload", payload]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(runner.main(), 1)
+            self.assertNotIn("fictional-unrecognized-action", output.getvalue())
+            self.assertEqual(json.loads(output.getvalue())["code"], "ENGINE_UNKNOWN_ACTION")
+
     @patch("runner._print_json")
     @patch("runner.handle_request")
     @patch("runner._parse_args")

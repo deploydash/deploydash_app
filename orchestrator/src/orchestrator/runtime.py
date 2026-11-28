@@ -84,11 +84,10 @@ class EngineRuntime:
         if resolution_error is not None:
             return json.dumps(resolution_error)
         if target is None:
-            action = payload.get("action")
             return json.dumps(
                 self._error_result(
                     "ENGINE_UNKNOWN_ACTION",
-                    f"Unknown action: {action}",
+                    "Unknown action. Expected run_workflow.",
                     stage="dispatch",
                 ),
             )
