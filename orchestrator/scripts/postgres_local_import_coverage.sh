@@ -58,6 +58,7 @@ FILE_SYMBOL_TARGETS_JSON='{
 FILE_ANCHOR_TARGETS_JSON='{
   "src/orchestrator/postgres_runtime_parts/local_import_support.py": [
     "upload_staging_paths",
+    "upload_trusted_host",
     "upload_staging_mkdir",
     "upload_stream_digest_init",
     "upload_stream_digest_update",

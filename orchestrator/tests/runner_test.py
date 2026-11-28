@@ -3,6 +3,8 @@ import sys
 import tempfile
 import unittest
 from argparse import Namespace
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -331,7 +333,7 @@ class TestRunnerDispatch(unittest.TestCase):
     """T-1.5.11: CLI payloads must reach registered engine operations."""
 
     def _assert_engine_accepts_addressing(self, payload):
-        response = json.loads(runner.handle_request(json.dumps(payload)))
+        response = runner.handle_request_payload(payload)
         self.assertNotIn(
             response.get("code"),
             {"ENGINE_UNKNOWN_ACTION", "ENGINE_VALIDATION_ERROR"},
@@ -397,10 +399,99 @@ class TestRunnerDispatch(unittest.TestCase):
 
 
 class TestRunnerMain(unittest.TestCase):
+    @patch("runner.handle_request_payload")
+    def test_cli_masks_generated_passwords_in_pretty_and_compact_output(self, dispatch):
+        dispatch.return_value = {
+            "status": "success",
+            "database": {
+                "password": "fictional-database-password",
+                "connection_uri": "postgresql://alice:fictional-database-password@db/example",
+            },
+            "result": ["  ordinary text  ", 12],
+        }
+        for formatting in ([], ["--pretty"]):
+            with (
+                self.subTest(formatting=formatting),
+                patch.object(
+                    sys, "argv", ["runner.py", "run-payload", "--payload", "{}", *formatting]
+                ),
+                redirect_stdout(StringIO()) as output,
+            ):
+                self.assertEqual(runner.main(), 0)
+                self.assertNotIn("fictional-database-password", output.getvalue())
+                parsed = json.loads(output.getvalue())
+                self.assertEqual(parsed["database"]["password"], "***")
+                self.assertEqual(
+                    parsed["database"]["connection_uri"], "postgresql://alice:***@db/example"
+                )
+                self.assertEqual(parsed["result"], ["  ordinary text  ", 12])
+
+    @patch("runner.handle_request_payload")
+    def test_cli_masks_quoted_ssh_passwords_in_diagnostics(self, dispatch):
+        dispatch.return_value = {
+            "status": "error",
+            "msg": "SSH authentication failed (password='four fictional words')",
+        }
+        with (
+            patch.object(sys, "argv", ["runner.py", "run-payload", "--payload", "{}"]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(runner.main(), 1)
+        self.assertEqual(
+            json.loads(output.getvalue())["msg"],
+            "SSH authentication failed (password='***')",
+        )
+
+    def test_invalid_action_is_not_echoed_into_cli_output(self):
+        payload = json.dumps({"action": "fictional-unrecognized-action"})
+        with (
+            patch.object(sys, "argv", ["runner.py", "run-payload", "--payload", payload]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(runner.main(), 1)
+            self.assertNotIn("fictional-unrecognized-action", output.getvalue())
+            self.assertEqual(json.loads(output.getvalue())["code"], "ENGINE_UNKNOWN_ACTION")
+
+    def test_cli_rejects_non_object_payload(self):
+        with (
+            patch.object(sys, "argv", ["runner.py", "run-payload", "--payload", "[]"]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(runner.main(), 1)
+            self.assertEqual(json.loads(output.getvalue())["code"], "ENGINE_INVALID_JSON")
+
+    def test_cli_does_not_echo_unrecognized_fields_in_validation_errors(self):
+        payload = json.dumps(
+            {
+                "action": "run_workflow",
+                "workflow_id": "server",
+                "operation_id": "check",
+                "unrecognized-fixture-field": "fixture-value",
+            }
+        )
+        with (
+            patch.object(sys, "argv", ["runner.py", "run-payload", "--payload", payload]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(runner.main(), 1)
+            self.assertNotIn("unrecognized-fixture-field", output.getvalue())
+            self.assertEqual(
+                json.loads(output.getvalue())["msg"], "payload contains an unrecognized field."
+            )
+
+    @patch("orchestrator.api.get_default_runtime", return_value=None)
+    def test_cli_reports_unconfigured_runtime(self, _get_default_runtime):
+        with (
+            patch.object(sys, "argv", ["runner.py", "echo"]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(runner.main(), 1)
+            self.assertEqual(json.loads(output.getvalue())["code"], "ENGINE_RUNTIME_NOT_CONFIGURED")
+
     @patch("runner._print_json")
-    @patch("runner.handle_request")
+    @patch("runner.handle_request_payload")
     @patch("runner._parse_args")
-    def test_main_success_exit_code(self, mock_parse_args, mock_handle_request, mock_print_json):
+    def test_main_success_exit_code(self, mock_parse_args, mock_dispatch, mock_print_json):
         mock_parse_args.return_value = Namespace(
             command="echo",
             data="hello",
@@ -408,7 +499,7 @@ class TestRunnerMain(unittest.TestCase):
             target=None,
             pretty=False,
         )
-        mock_handle_request.return_value = json.dumps({"status": "success"})
+        mock_dispatch.return_value = {"status": "success"}
 
         exit_code = runner.main()
         self.assertEqual(exit_code, 0)
@@ -434,33 +525,19 @@ class TestRunnerMain(unittest.TestCase):
         self.assertEqual(rendered["status"], "error")
 
     @patch("runner._print_json")
-    @patch("runner.handle_request", side_effect=json.JSONDecodeError("bad", "", 0))
-    @patch("runner._parse_args")
-    def test_main_handles_json_decode_error(
-        self,
-        mock_parse_args,
-        _mock_handle_request,
-        mock_print_json,
-    ):
-        mock_parse_args.return_value = Namespace(
-            command="echo",
-            data="hello",
-            config=None,
-            target=None,
-            pretty=False,
-        )
-        exit_code = runner.main()
-        self.assertEqual(exit_code, 2)
+    def test_main_handles_json_decode_error(self, mock_print_json):
+        with patch.object(sys, "argv", ["runner.py", "run-payload", "--payload", "{"]):
+            self.assertEqual(runner.main(), 2)
         rendered = mock_print_json.call_args.args[0]
         self.assertIn("Invalid JSON", rendered["msg"])
 
     @patch("runner._print_json")
-    @patch("runner.handle_request", side_effect=RuntimeError("boom"))
+    @patch("runner.handle_request_payload", side_effect=RuntimeError("boom"))
     @patch("runner._parse_args")
     def test_main_handles_unexpected_exception(
         self,
         mock_parse_args,
-        _mock_handle_request,
+        _mock_dispatch,
         mock_print_json,
     ):
         mock_parse_args.return_value = Namespace(

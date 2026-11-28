@@ -64,49 +64,52 @@ class EngineRuntime:
                 ),
             )
 
+        return json.dumps(
+            self.handle_request_payload(payload, emit=emit, is_cancelled=is_cancelled)
+        )
+
+    def handle_request_payload(
+        self,
+        payload: object,
+        emit: EmitFn | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
         if not isinstance(payload, dict):
-            return json.dumps(
-                self._error_result(
-                    "ENGINE_INVALID_JSON",
-                    "JSON payload must be an object.",
-                    stage="parse_request",
-                ),
+            return self._error_result(
+                "ENGINE_INVALID_JSON",
+                "JSON payload must be an object.",
+                stage="parse_request",
             )
 
         protocol_error = self._validate_protocol(payload)
         if protocol_error is not None:
-            return json.dumps(protocol_error)
+            return protocol_error
 
         target, resolution_error = resolve_request_target(
             payload,
             error_result=self._error_result,
         )
         if resolution_error is not None:
-            return json.dumps(resolution_error)
+            return resolution_error
         if target is None:
-            action = payload.get("action")
-            return json.dumps(
-                self._error_result(
-                    "ENGINE_UNKNOWN_ACTION",
-                    f"Unknown action: {action}",
-                    stage="dispatch",
-                ),
+            return self._error_result(
+                "ENGINE_UNKNOWN_ACTION",
+                "Unknown action. Expected run_workflow.",
+                stage="dispatch",
             )
 
         workflow_registry = self._workflow_registry_getter()
         workflow = workflow_registry.get(target.workflow_id)
         if not isinstance(workflow, dict) or target.operation_id not in workflow:
-            return json.dumps(
-                self._error_result(
-                    "ENGINE_VALIDATION_ERROR",
-                    f"Unknown workflow operation: {target.workflow_id}/{target.operation_id}",
-                    stage="validate_request",
-                ),
+            return self._error_result(
+                "ENGINE_VALIDATION_ERROR",
+                f"Unknown workflow operation: {target.workflow_id}/{target.operation_id}",
+                stage="validate_request",
             )
 
         schema_error = self._validate_params_schema(payload, target, workflow)
         if schema_error is not None:
-            return json.dumps(schema_error)
+            return schema_error
 
         handlers = self._workflow_handlers_getter()
         handler = handlers.get((target.workflow_id, target.operation_id))
@@ -142,7 +145,7 @@ class EngineRuntime:
                 },
             )
 
-        return json.dumps(response)
+        return response
 
     def _validate_params_schema(
         self,

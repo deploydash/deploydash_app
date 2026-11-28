@@ -4,7 +4,8 @@ from pathlib import Path
 
 from . import engine as _engine_bootstrap  # noqa: F401
 from . import settings_ownership
-from .api import handle_request
+from .api import handle_request_payload
+from .log_sanitizer import sanitize_data
 from .setup_parts import ALL_PARTS, CANONICAL_SETUP_SETTINGS
 
 
@@ -78,7 +79,7 @@ def _parse_args():
 
     payload_parser = subparsers.add_parser(
         "run-payload",
-        help="Run raw payload JSON through engine.handle_request.",
+        help="Run a JSON request through the engine.",
     )
     payload_group = payload_parser.add_mutually_exclusive_group(required=True)
     payload_group.add_argument("--payload")
@@ -256,10 +257,7 @@ def _build_payload(args, target):
 
 
 def _print_json(data, pretty=False):
-    if pretty:
-        print(json.dumps(data, indent=2))
-        return
-    print(json.dumps(data))
+    print(json.dumps(sanitize_data(data, strip_text=False), indent=2 if pretty else None))
 
 
 def main():
@@ -269,8 +267,7 @@ def main():
         target = _resolve_target(config, args.target)
         payload = _build_payload(args, target)
 
-        result_json = handle_request(json.dumps(payload))
-        result = json.loads(result_json)
+        result = handle_request_payload(payload)
         _print_json(result, pretty=args.pretty)
 
         return 0 if result.get("status") == "success" else 1

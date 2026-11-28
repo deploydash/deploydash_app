@@ -21,8 +21,8 @@ def validate_against_schema(
 ) -> list[str]:
     """Return a list of human-readable error strings (empty if valid).
 
-    Each message is prefixed with the dotted field path of the offending
-    value, e.g. "params.settings.database_name is required."
+    Messages identify the relevant schema field or containing object.
+    Unknown field names and submitted values are omitted from diagnostics.
     """
     errors: list[str] = []
     _validate(instance, schema, path, errors)
@@ -110,19 +110,17 @@ def _validate_object(
 
     properties = schema.get("properties")
     if properties is not None:
-        for key, value in instance.items():
-            if key in properties:
-                _validate(value, properties[key], f"{path}.{key}", errors)
+        for key, property_schema in properties.items():
+            if key in instance:
+                _validate(instance[key], property_schema, f"{path}.{key}", errors)
 
-        if schema.get("additionalProperties") is False:
-            extra = sorted(set(instance.keys()) - set(properties.keys()))
-            for key in extra:
-                errors.append(f"{path}.{key} is not a recognized field.")
+        if schema.get("additionalProperties") is False and instance.keys() - properties.keys():
+            errors.append(f"{path} contains an unrecognized field.")
 
     property_names_schema = schema.get("propertyNames")
     if property_names_schema is not None:
         for key in instance:
-            _validate(key, property_names_schema, f"{path} key {key!r}", errors)
+            _validate(key, property_names_schema, f"{path} property name", errors)
 
     for key, required_names in schema.get("dependentRequired", {}).items():
         if key not in instance:

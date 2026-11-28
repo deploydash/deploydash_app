@@ -90,8 +90,8 @@ class TestSchemaValidation(unittest.TestCase):
 
     def test_object_additional_properties_false_rejects_unknown_keys(self):
         schema = {"properties": {"a": {}}, "additionalProperties": False}
-        errors = validate_against_schema({"a": 1, "b": 2}, schema, path="x")
-        self.assertEqual(errors, ["x.b is not a recognized field."])
+        errors = validate_against_schema({"a": 1, "unknown": 2, "unexpected": 3}, schema, path="x")
+        self.assertEqual(errors, ["x contains an unrecognized field."])
 
     def test_object_additional_properties_absent_allows_unknown_keys(self):
         schema = {"properties": {"a": {}}}
@@ -100,8 +100,8 @@ class TestSchemaValidation(unittest.TestCase):
 
     def test_property_names_validates_each_key(self):
         schema = {"propertyNames": {"pattern": r"^[a-z]+$"}}
-        errors = validate_against_schema({"BAD": 1}, schema, path="x")
-        self.assertEqual(errors, ["x key 'BAD' does not match the required pattern."])
+        errors = validate_against_schema({"valid": 1, "BAD": 2}, schema, path="x")
+        self.assertEqual(errors, ["x property name does not match the required pattern."])
 
     def test_dependent_required(self):
         schema = {"dependentRequired": {"a": ["b", "c"]}}

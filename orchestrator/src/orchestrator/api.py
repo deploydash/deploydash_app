@@ -6,6 +6,12 @@ from .contracts import EmitFn
 from .runtime import EngineRuntime
 
 _DEFAULT_RUNTIME: EngineRuntime | None = None
+_RUNTIME_NOT_CONFIGURED = {
+    "status": "error",
+    "code": "ENGINE_RUNTIME_NOT_CONFIGURED",
+    "msg": "orchestrator default runtime is not configured.",
+    "stage": "dispatch",
+}
 
 
 def build_runtime(
@@ -60,16 +66,17 @@ def handle_request(
 ) -> str:
     runtime = get_default_runtime()
     if runtime is None:
-        return json.dumps(
-            {
-                "status": "error",
-                "code": "ENGINE_RUNTIME_NOT_CONFIGURED",
-                "msg": "orchestrator default runtime is not configured.",
-                "stage": "dispatch",
-            }
-        )
+        return json.dumps(_RUNTIME_NOT_CONFIGURED)
     return runtime.handle_request_json(
         json_str,
         emit=emit,
         is_cancelled=is_cancelled,
     )
+
+
+def handle_request_payload(payload: object) -> dict[str, Any]:
+    """Dispatch an already parsed request from the local CLI."""
+    runtime = get_default_runtime()
+    if runtime is None:
+        return _RUNTIME_NOT_CONFIGURED.copy()
+    return runtime.handle_request_payload(payload)

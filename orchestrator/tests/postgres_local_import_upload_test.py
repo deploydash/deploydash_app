@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from contextlib import ExitStack
 
+import paramiko
+
 from orchestrator.postgres_runtime_parts import local_import_support
 from tests.postgres_helpers_support import (
     _config,
@@ -101,13 +103,16 @@ class _FakeSshClient:
         self.sftp = _FakeSftpClient()
         self.closed = False
         self.host_key_policy = None
-        self.saved_host_keys = None
+        self.loaded_host_keys = None
+        self.loaded_system_host_keys = False
 
     def load_system_host_keys(self):
-        """Why: the uploader loads system host keys before its own file."""
+        """Record when the uploader uses the workstation trust store."""
+        self.loaded_system_host_keys = True
 
     def load_host_keys(self, path):
-        """Why: the uploader loads the known-hosts file when configured."""
+        """Record the managed trust store selected by the uploader."""
+        self.loaded_host_keys = path
 
     def set_missing_host_key_policy(self, policy):
         """Why: records which host-key policy the uploader selected."""
@@ -126,28 +131,28 @@ class _FakeSshClient:
         self.exec_commands.append(command)
         return (None, _FakeChannelFile(self.checksum_output), None)
 
-    def save_host_keys(self, path):
-        """Why: accept-new persists the host key instead of writing it."""
-        self.saved_host_keys = path
-
     def close(self):
         """Why: the uploader always closes the SSH connection."""
         self.closed = True
 
 
 class TestLocalSqlImportUpload(unittest.TestCase):
-    def _run_upload(self, payload, *, checksum=None, is_cancelled=None, chunk_size=None):
+    def _run_upload(
+        self,
+        payload,
+        *,
+        checksum=None,
+        is_cancelled=None,
+        chunk_size=None,
+        known_hosts_file="/fixture/known_hosts",
+        client=None,
+    ):
         """Why: builds the fakes, temp dump and clean SSH env per case."""
         expected = hashlib.sha256(payload).hexdigest()
         if checksum is None:
             checksum = f"{expected}  {_REMOTE_PATH}\n".encode("ascii")
-        clients = []
-
-        def fake_client_factory():
-            """Why: hands paramiko's slot a recording client for the case."""
+        if client is None:
             client = _FakeSshClient(checksum)
-            clients.append(client)
-            return client
 
         events = []
         ctx = build_test_context(
@@ -170,7 +175,13 @@ class TestLocalSqlImportUpload(unittest.TestCase):
                     patch.object(
                         local_import_support.paramiko,
                         "SSHClient",
-                        fake_client_factory,
+                        return_value=client,
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "orchestrator.engine_runtime_common._resolve_known_hosts_file",
+                        return_value=known_hosts_file,
                     )
                 )
                 stack.enter_context(patch.dict(os.environ, clean_env))
@@ -193,7 +204,7 @@ class TestLocalSqlImportUpload(unittest.TestCase):
                     emit=None,
                     is_cancelled=is_cancelled,
                 )
-        return result, clients[0], events
+        return result, client, events
 
     def test_upload_stages_0600_file_in_0700_dir_and_verifies_sha256(self):
         payload = b"CREATE TABLE demo(id integer);\n"
@@ -217,6 +228,39 @@ class TestLocalSqlImportUpload(unittest.TestCase):
         self.assertEqual(client.connect_kwargs["username"], "ubuntu")
         self.assertEqual(client.connect_kwargs["hostname"], "198.51.100.8")
         self.assertEqual(client.connect_kwargs["password"], "secret")
+        self.assertEqual(client.loaded_host_keys, "/fixture/known_hosts")
+        self.assertFalse(client.loaded_system_host_keys)
+        self.assertIsInstance(client.host_key_policy, paramiko.RejectPolicy)
+
+    def test_upload_uses_system_trust_when_no_managed_file_is_configured(self):
+        _, client, _ = self._run_upload(b"SELECT 1;\n", known_hosts_file=None)
+        self.assertTrue(client.loaded_system_host_keys)
+        self.assertIsNone(client.loaded_host_keys)
+        self.assertIsInstance(client.host_key_policy, paramiko.RejectPolicy)
+
+    def test_upload_aborts_before_sftp_when_server_identity_is_rejected(self):
+        client = _FakeSshClient(b"")
+        with (
+            patch.object(client, "connect", side_effect=paramiko.SSHException("Untrusted host")),
+            patch.object(client, "open_sftp") as open_sftp,
+            self.assertRaisesRegex(paramiko.SSHException, "Untrusted host"),
+        ):
+            self._run_upload(b"SELECT 1;\n", client=client)
+        self.assertIsInstance(client.host_key_policy, paramiko.RejectPolicy)
+        open_sftp.assert_not_called()
+        self.assertTrue(client.closed)
+
+    def test_upload_does_not_override_an_unreadable_managed_trust_file(self):
+        client = _FakeSshClient(b"")
+        with (
+            patch.object(client, "load_host_keys", side_effect=OSError("Trust file unreadable")),
+            patch.object(client, "connect") as connect,
+            self.assertRaisesRegex(OSError, "Trust file unreadable"),
+        ):
+            self._run_upload(b"SELECT 1;\n", client=client)
+        connect.assert_not_called()
+        self.assertFalse(client.loaded_system_host_keys)
+        self.assertTrue(client.closed)
 
     def test_upload_restricts_staged_file_before_the_first_byte(self):
         # The 0600 must land before any dump bytes stream: a chmod after
